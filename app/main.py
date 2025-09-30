@@ -239,23 +239,35 @@ def calculate_revenue_recognized(project_vuid, accounting_period_vuid, eac_enabl
     
     # Calculate percent complete
     percent_complete = 0.0
+    budget_for_percent_calc = 0.0
+    
     if eac_enabled and accounting_period_vuid:
+        print(f"DEBUG REVENUE CALC: EAC enabled, eac_amount = {eac_amount}")
         if eac_amount > 0:
             percent_complete = (costs_to_date / eac_amount) * 100
+            budget_for_percent_calc = eac_amount
+            print(f"DEBUG REVENUE CALC: Using EAC for % complete: {costs_to_date} / {eac_amount} = {percent_complete}%")
         else:
             # If EAC is 0, fall back to current budget for percent complete calculation
             # Revenue recognition should not depend on EAC data being entered
             current_budget_amount = calculate_current_budget_amount(project_vuid, accounting_period_vuid)
+            budget_for_percent_calc = current_budget_amount
             if current_budget_amount > 0:
                 percent_complete = (costs_to_date / current_budget_amount) * 100
+            print(f"DEBUG REVENUE CALC: EAC is 0, using current budget for % complete: {costs_to_date} / {current_budget_amount} = {percent_complete}%")
     else:
         # Use current budget for percent complete calculation when EAC reporting is disabled
         current_budget_amount = calculate_current_budget_amount(project_vuid, accounting_period_vuid)
+        budget_for_percent_calc = current_budget_amount
         if current_budget_amount > 0:
             percent_complete = (costs_to_date / current_budget_amount) * 100
+        print(f"DEBUG REVENUE CALC: EAC disabled, using current budget for % complete: {costs_to_date} / {current_budget_amount} = {percent_complete}%")
     
     # Calculate revenue recognized
     revenue_recognized = (percent_complete / 100) * total_contract_amount
+    
+    print(f"DEBUG REVENUE CALC FINAL: % complete = {percent_complete}%, revenue = {revenue_recognized}")
+    print(f"  Formula: ({percent_complete} / 100) * {total_contract_amount} = {revenue_recognized}")
     
     return {
         'revenue_recognized': revenue_recognized,
@@ -821,7 +833,26 @@ def create_ap_invoice_combined_entry_preview(invoice):
 def create_project_billing_net_entry_preview(billing):
     """Create preview for project billing net entry"""
     try:
-        net_amount = float(billing.total_amount or 0)
+        # Calculate retainage from line items (since billing.retention_held might be 0)
+        total_line_retainage_held = sum(float(line.retention_held or 0) for line in billing.line_items)
+        total_line_retainage_released = sum(float(line.retention_released or 0) for line in billing.line_items)
+        
+        # Calculate net amount: total - retainage held + retainage released
+        print(f"DEBUG create_project_billing_net_entry_preview:")
+        print(f"  billing.total_amount = {billing.total_amount}")
+        print(f"  billing.retention_held = {billing.retention_held}")
+        print(f"  billing.retention_released = {billing.retention_released}")
+        print(f"  total_line_retainage_held = {total_line_retainage_held}")
+        print(f"  total_line_retainage_released = {total_line_retainage_released}")
+        
+        # Use line item retainage if billing-level retainage is not set
+        retainage_held = float(billing.retention_held or 0) if billing.retention_held else total_line_retainage_held
+        retainage_released = float(billing.retention_released or 0) if billing.retention_released else total_line_retainage_released
+        
+        net_amount = float(billing.total_amount or 0) - retainage_held + retainage_released
+        print(f"  Final retainage_held = {retainage_held}")
+        print(f"  Final retainage_released = {retainage_released}")
+        print(f"  Calculated net_amount = {net_amount}")
         
         line_items = []
         total_debits = 0
@@ -835,7 +866,7 @@ def create_project_billing_net_entry_preview(billing):
             print("Required accounts not found for project billing preview")
             return None
         
-        # Debit: Accounts Receivable (net)
+        # Debit: Accounts Receivable (net - excluding new retainage)
         if net_amount > 0:
             line_items.append({
                 'gl_account_vuid': ar_account.vuid,
@@ -845,7 +876,7 @@ def create_project_billing_net_entry_preview(billing):
             })
             total_debits += net_amount
         
-        # Credit: Construction Revenue (net)
+        # Credit: Construction Revenue (net - excluding new retainage)
         if net_amount > 0:
             line_items.append({
                 'gl_account_vuid': revenue_account.vuid,
@@ -8736,6 +8767,12 @@ def get_wip_report():
             combined_contract_number = " + ".join(contract_numbers) if len(contract_numbers) > 1 else (contract_numbers[0] if contract_numbers else "")
             combined_contract_name = " + ".join(contract_names) if len(contract_names) > 1 else (contract_names[0] if contract_names else "")
             
+            # When EAC reporting is enabled and EAC > 0, display EAC as the current budget
+            # Otherwise display the standard current budget
+            display_budget_amount = current_budget_amount
+            if eac_enabled and eac_amount > 0:
+                display_budget_amount = eac_amount
+            
             wip_item = {
                 'project_vuid': project.vuid,
                 'project_number': project.project_number,
@@ -8757,7 +8794,7 @@ def get_wip_report():
                 'under_billing': round(under_billing, 2),  # Calculated: max(0, revenue_recognized - project_billings_total)
                 'status': contracts[0].status if contracts else 'unknown',  # Use first contract status
                 'original_budget_amount': original_budget_amount,
-                'current_budget_amount': round(current_budget_amount, 2),
+                'current_budget_amount': round(display_budget_amount, 2),  # Shows EAC when EAC reporting is enabled and EAC > 0
                 'eac_amount': round(eac_amount, 2) if eac_enabled else None,  # EAC amount when EAC reporting is enabled
                 'eac_from_snapshot': eac_from_snapshot if eac_enabled else None,  # Indicates if EAC data is from snapshot
                 'eac_message': eac_message if eac_enabled else None,  # Message about EAC data status
@@ -14192,33 +14229,35 @@ def preview_journal_entries():
                 if ar_account:
                     ar_account_name = ar_account.account_name
                 
+                # Calculate net amount (excluding NEW retainage held, but including released retainage)
+                net_amount = float(billing.total_amount or 0) - float(billing.retention_held or 0) + float(billing.retention_released or 0)
+                
                 debit_line = {
-                    'description': f"Project Billing {billing.billing_number}",
+                    'description': f"Project Billing {billing.billing_number} (Net)",
                     'account': ar_account_name,
-                    'debit_amount': float(billing.total_amount or 0),
+                    'debit_amount': net_amount,
                     'credit_amount': 0,
                     'cost_code': 'N/A',
                     'cost_type': 'N/A'
                 }
                 preview_entry['line_items'].append(debit_line)
                 
-                # Credit line (revenue)
+                # Credit line (revenue) - also use net amount
                 # Get construction revenue account name
                 revenue_account = ChartOfAccounts.query.filter_by(account_name='Construction Revenue').first()
                 revenue_account_name = 'Construction Revenue'  # Default
                 if revenue_account:
                     revenue_account_name = revenue_account.account_name
                 
-                for line in billing.line_items:
-                    line_preview = {
-                        'description': line.description,
-                        'account': revenue_account_name,
-                        'debit_amount': 0,
-                        'credit_amount': float(line.actual_billing_amount or 0),
-                        'cost_code': line.cost_code.code if line.cost_code else 'N/A',
-                        'cost_type': line.cost_type.cost_type if line.cost_type else 'N/A'
-                    }
-                    preview_entry['line_items'].append(line_preview)
+                credit_line = {
+                    'description': f"Project Billing {billing.billing_number} (Net)",
+                    'account': revenue_account_name,
+                    'debit_amount': 0,
+                    'credit_amount': net_amount,
+                    'cost_code': 'N/A',
+                    'cost_type': 'N/A'
+                }
+                preview_entry['line_items'].append(credit_line)
                 
                 preview_entries.append(preview_entry)
         

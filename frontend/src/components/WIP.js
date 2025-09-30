@@ -609,7 +609,7 @@ const WIP = () => {
             <div className="text-lg font-bold text-green-600 mb-1">
               {formatCurrency((filteredData || []).reduce((sum, item) => sum + (item.current_budget_amount || 0), 0))}
             </div>
-            <div className="text-green-800 font-medium text-xs leading-tight">Total Current Budget</div>
+            <div className="text-green-800 font-medium text-xs leading-tight">{eacEnabled ? 'Total Est. Cost at Completion' : 'Total Current Budget'}</div>
           </div>
           
           <div className="bg-white rounded-xl shadow-2xl p-4 border border-gray-200 flex flex-col items-center justify-center text-center">
@@ -807,6 +807,14 @@ const WIP = () => {
                       {getSortIcon('change_orders')}
                     </div>
                   </th>
+                  {eacEnabled && (
+                    <th className="px-4 py-3 text-right text-xs font-semibold text-indigo-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 bg-indigo-50" onClick={() => handleSort('pending_change_orders_revenue')}>
+                      <div className="flex items-center justify-end space-x-1">
+                        <span>Pending CO Revenue</span>
+                        {getSortIcon('pending_change_orders_revenue')}
+                      </div>
+                    </th>
+                  )}
                   <th className="px-4 py-3 text-right text-xs font-semibold text-gray-900 uppercase tracking-wider cursor-pointer hover:bg-gray-100" onClick={() => handleSort('total_contract_amount')}>
                     <div className="flex items-center justify-end space-x-1">
                       <span>Total Contract</span>
@@ -819,28 +827,20 @@ const WIP = () => {
                       {getSortIcon('original_budget_amount')}
                     </div>
                   </th>
+                  {eacEnabled && (
+                    <th className="px-4 py-3 text-right text-xs font-semibold text-indigo-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 bg-indigo-50" onClick={() => handleSort('pending_change_orders_budget')}>
+                      <div className="flex items-center justify-end space-x-1">
+                        <span>Pending CO Budget</span>
+                        {getSortIcon('pending_change_orders_budget')}
+                      </div>
+                    </th>
+                  )}
                   <th className="px-4 py-3 text-right text-xs font-semibold text-gray-900 uppercase tracking-wider cursor-pointer hover:bg-gray-100" onClick={() => handleSort('current_budget_amount')}>
                     <div className="flex items-center justify-end space-x-1">
-                      <span>Current Budget</span>
+                      <span>{eacEnabled ? 'Est. Cost at Completion' : 'Current Budget'}</span>
                       {getSortIcon('current_budget_amount')}
                     </div>
                   </th>
-                  {eacEnabled && (
-                    <>
-                      <th className="px-4 py-3 text-right text-xs font-semibold text-indigo-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 bg-indigo-50" onClick={() => handleSort('pending_change_orders_revenue')}>
-                        <div className="flex items-center justify-end space-x-1">
-                          <span>Pending CO Revenue</span>
-                          {getSortIcon('pending_change_orders_revenue')}
-                        </div>
-                      </th>
-                      <th className="px-4 py-3 text-right text-xs font-semibold text-indigo-700 uppercase tracking-wider cursor-pointer hover:bg-gray-100 bg-indigo-50" onClick={() => handleSort('pending_change_orders_budget')}>
-                        <div className="flex items-center justify-end space-x-1">
-                          <span>Pending CO Budget</span>
-                          {getSortIcon('pending_change_orders_budget')}
-                        </div>
-                      </th>
-                    </>
-                  )}
                   <th className="px-4 py-3 text-right text-xs font-semibold text-gray-900 uppercase tracking-wider cursor-pointer hover:bg-gray-100" onClick={() => handleSort('costs_to_date')}>
                     <div className="flex items-center justify-end space-x-1">
                       <span>Costs to Date</span>
@@ -917,47 +917,47 @@ const WIP = () => {
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-900">
                       {formatCurrency(item.change_orders || 0)}
                     </td>
+                    {eacEnabled && (
+                      <td 
+                        className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-indigo-700 bg-indigo-50 cursor-pointer hover:bg-indigo-100 transition-colors"
+                        onClick={(e) => handlePendingCOClick(e, item.project_vuid, selectedPeriod)}
+                        title="Click to view pending change orders"
+                      >
+                        <div className="flex items-center justify-end space-x-1">
+                          <span>{formatCurrency(item.pending_change_orders_revenue || 0)}</span>
+                          {(item.pending_change_orders_revenue || 0) > 0 && (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          )}
+                        </div>
+                      </td>
+                    )}
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-semibold text-gray-900">
                       {formatCurrency(item.total_contract_amount)}
                     </td>
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-900">
                       {formatCurrency(item.original_budget_amount)}
                     </td>
+                    {eacEnabled && (
+                      <td 
+                        className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-indigo-700 bg-indigo-50 cursor-pointer hover:bg-indigo-100 transition-colors"
+                        onClick={(e) => handlePendingCOClick(e, item.project_vuid, selectedPeriod)}
+                        title="Click to view pending change orders"
+                      >
+                        <div className="flex items-center justify-end space-x-1">
+                          <span>{formatCurrency(item.pending_change_orders_budget || 0)}</span>
+                          {(item.pending_change_orders_budget || 0) > 0 && (
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
+                            </svg>
+                          )}
+                        </div>
+                      </td>
+                    )}
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-right font-semibold text-gray-900">
                       {formatCurrency(item.current_budget_amount)}
                     </td>
-                    {eacEnabled && (
-                      <>
-                        <td 
-                          className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-indigo-700 bg-indigo-50 cursor-pointer hover:bg-indigo-100 transition-colors"
-                          onClick={(e) => handlePendingCOClick(e, item.project_vuid, selectedPeriod)}
-                          title="Click to view pending change orders"
-                        >
-                          <div className="flex items-center justify-end space-x-1">
-                            <span>{formatCurrency(item.pending_change_orders_revenue || 0)}</span>
-                            {(item.pending_change_orders_revenue || 0) > 0 && (
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                              </svg>
-                            )}
-                          </div>
-                        </td>
-                        <td 
-                          className="px-4 py-3 whitespace-nowrap text-sm text-right font-medium text-indigo-700 bg-indigo-50 cursor-pointer hover:bg-indigo-100 transition-colors"
-                          onClick={(e) => handlePendingCOClick(e, item.project_vuid, selectedPeriod)}
-                          title="Click to view pending change orders"
-                        >
-                          <div className="flex items-center justify-end space-x-1">
-                            <span>{formatCurrency(item.pending_change_orders_budget || 0)}</span>
-                            {(item.pending_change_orders_budget || 0) > 0 && (
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5l7 7-7 7" />
-                              </svg>
-                            )}
-                          </div>
-                        </td>
-                      </>
-                    )}
                     <td className="px-4 py-3 whitespace-nowrap text-sm text-right text-gray-900">
                       {formatCurrency(item.costs_to_date || 0)}
                     </td>

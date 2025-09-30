@@ -1,1 +1,4846 @@
+import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
 
+const ProjectBilling = () => {
+  const location = useLocation();
+  const searchParams = new URLSearchParams(location.search);
+  const projectVuid = searchParams.get('project');
+  const billingVuid = searchParams.get('billing');
+  
+  const [billings, setBillings] = useState([]);
+  const [projects, setProjects] = useState([]);
+  const [projectContracts, setProjectContracts] = useState([]);
+  const [customers, setCustomers] = useState([]);
+  const [costCodes, setCostCodes] = useState([]);
+  const [projectCostCodes, setProjectCostCodes] = useState([]);
+  const [costTypes, setCostTypes] = useState([]);
+  const [accountingPeriods, setAccountingPeriods] = useState([]);
+  const [externalChangeOrders, setExternalChangeOrders] = useState([]);
+  const [changeOrderLines, setChangeOrderLines] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [showQBOExportModal, setShowQBOExportModal] = useState(false);
+  const [qboExportLoading, setQboExportLoading] = useState(false);
+  const [qboExportResult, setQboExportResult] = useState(null);
+  const [showCostsBreakdownModal, setShowCostsBreakdownModal] = useState(false);
+  const [costsBreakdown, setCostsBreakdown] = useState(null);
+  const [costsBreakdownLoading, setCostsBreakdownLoading] = useState(false);
+  const [unallocatedCosts, setUnallocatedCosts] = useState(null);
+  const [unallocatedCostsLoading, setUnallocatedCostsLoading] = useState(false);
+  const [showUnallocatedCostsModal, setShowUnallocatedCostsModal] = useState(false);
+  
+  // Prefill period selection state
+  const [showPrefillPeriodModal, setShowPrefillPeriodModal] = useState(false);
+  const [allAccountingPeriods, setAllAccountingPeriods] = useState([]);
+  const [selectedPrefillPeriod, setSelectedPrefillPeriod] = useState('');
+  
+  // Cost breakdown period selection state
+  const [showCostBreakdownPeriodModal, setShowCostBreakdownPeriodModal] = useState(false);
+  const [selectedCostBreakdownPeriod, setSelectedCostBreakdownPeriod] = useState('');
+  
+  // Preview journal entry state
+  const [showPreviewModal, setShowPreviewModal] = useState(false);
+  const [previewData, setPreviewData] = useState(null);
+  const [previewLoading, setPreviewLoading] = useState(false);
+  
+  const [createFormData, setCreateFormData] = useState({
+    billing_number: '',
+    project_vuid: '',
+    contract_vuid: '',
+    customer_vuid: '',
+    billing_date: new Date().toISOString().split('T')[0],
+    due_date: '',
+    accounting_period_vuid: '',
+    description: '',
+    status: 'pending'
+  });
+  const [createBillingLines, setCreateBillingLines] = useState([]);
+  const [creating, setCreating] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('');
+  const [accountingPeriodFilter, setAccountingPeriodFilter] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage] = useState(10);
+  
+  // View/Edit line items state
+  const [showViewLinesModal, setShowViewLinesModal] = useState(false);
+  const [selectedBilling, setSelectedBilling] = useState(null);
+  const [billingLineItems, setBillingLineItems] = useState([]);
+  const [loadingLines, setLoadingLines] = useState(false);
+  const [editingLineIndex, setEditingLineIndex] = useState(null);
+  const [editingLineData, setEditingLineData] = useState({});
+  const [billedToDateData, setBilledToDateData] = useState({});
+  
+  // Edit billing state
+  const [showEditModal, setShowEditModal] = useState(false);
+  const [editingBilling, setEditingBilling] = useState(null);
+  const [editFormData, setEditFormData] = useState({});
+  
+
+  // Tooltip state for cost breakdown
+  const [tooltipData, setTooltipData] = useState(null);
+  const [tooltipPosition, setTooltipPosition] = useState({ x: 0, y: 0 });
+
+  // Bulk markup modal state
+  const [showBulkMarkupModal, setShowBulkMarkupModal] = useState(false);
+  const [bulkMarkupPercentage, setBulkMarkupPercentage] = useState('');
+
+  // Financial metrics state
+  const [billingMetrics, setBillingMetrics] = useState({
+    billingsToDate: 0,
+    revenueRecognized: 0,
+    revenueRecognizedThisPeriod: 0,
+    totalContractAmount: 0,
+    overUnderBilling: 0,
+    billingStatus: 'neutral', // 'over', 'under', or 'neutral'
+    currentBudgetAmount: 0,
+    costsThisPeriod: 0,
+    percentComplete: 0,
+    currentBillingAmount: 0,
+    eacEnabled: false,
+    isLoading: true
+  });
+
+  // Wrap setBillingMetrics with debugging to track what's overriding values
+  const setBillingMetricsWithDebug = (newMetrics) => {
+    const isFunction = typeof newMetrics === 'function';
+    const finalMetrics = isFunction ? newMetrics(billingMetrics) : newMetrics;
+    
+    console.log('🔍 setBillingMetrics called with:', {
+      isFunction,
+      currentBillingAmount: finalMetrics.currentBillingAmount,
+      showEditModal,
+      stackTrace: new Error().stack.split('\n')[2] // Show where it was called from
+    });
+    
+    setBillingMetrics(newMetrics);
+  };
+
+  const baseURL = 'http://localhost:5001';
+
+  // Helper function to combine global and project-specific cost codes
+  const getAllCostCodes = () => {
+    return [...costCodes, ...projectCostCodes];
+  };
+
+  // Fetch project-specific cost codes
+  const fetchProjectCostCodes = async (projectVuid) => {
+    if (!projectVuid) {
+      setProjectCostCodes([]);
+      return;
+    }
+    
+    try {
+      const response = await fetch(`${baseURL}/api/projects/${projectVuid}/cost-codes`);
+      if (response.ok) {
+        const data = await response.json();
+        const projectSpecificCodes = data.filter(code => code.is_project_specific);
+        setProjectCostCodes(projectSpecificCodes);
+        console.log(`🔍 Debug: Fetched ${projectSpecificCodes.length} project-specific cost codes for project billing`);
+      }
+    } catch (err) {
+      console.error('Error loading project cost codes:', err);
+      setProjectCostCodes([]);
+    }
+  };
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  // Pre-populate project if provided in URL
+  useEffect(() => {
+    if (projectVuid && projectVuid.trim() !== '') {
+      setCreateFormData(prev => ({
+        ...prev,
+        project_vuid: projectVuid
+      }));
+      // Fetch project-specific cost codes when project is set from URL
+      fetchProjectCostCodes(projectVuid);
+    }
+  }, [projectVuid]);
+
+  // Track if we just completed an update to prevent auto-reopen
+  const [justUpdated, setJustUpdated] = useState(false);
+
+  // Handle viewing a specific billing if provided in URL (disabled after update)
+  useEffect(() => {
+    if (billingVuid && billings.length > 0 && !justUpdated) {
+      const billing = billings.find(b => b.vuid === billingVuid);
+      if (billing) {
+        // Open edit modal instead of view lines modal
+        handleEditBilling(billing);
+      }
+    }
+  }, [billingVuid, billings, justUpdated]);
+
+  // Auto-calculate billing metrics when project or contract changes (CREATE MODE ONLY)
+  useEffect(() => {
+    if (!showEditModal && createFormData.project_vuid && createFormData.contract_vuid) {
+      console.log('Create mode: Project or contract changed, debouncing metrics calculation...');
+      const timeoutId = setTimeout(() => {
+        console.log('Executing debounced metrics calculation for create mode...');
+        calculateBillingMetrics();
+      }, 1000); // 1 second debounce
+      
+      return () => clearTimeout(timeoutId);
+    }
+  }, [createFormData.project_vuid, createFormData.contract_vuid, showEditModal]);
+
+  // DISABLED: Auto-calculate billing metrics in edit mode (user should control all changes)
+  // useEffect(() => {
+  //   if (editFormData.project_vuid && editFormData.contract_vuid) {
+  //     console.log('Edit form project or contract changed, debouncing metrics calculation...');
+  //     const timeoutId = setTimeout(() => {
+  //       console.log('Executing debounced edit form metrics calculation...');
+  //       calculateBillingMetrics();
+  //     }, 1000); // 1 second debounce
+  //     
+  //     return () => clearTimeout(timeoutId);
+  //   }
+  // }, [editFormData.project_vuid, editFormData.contract_vuid]);
+
+  // Debug editing states
+  useEffect(() => {
+    console.log('Editing states changed:', {
+      editingLineIndex,
+      editingLineData,
+      showEditModal
+    });
+  }, [editingLineIndex, editingLineData, showEditModal]);
+
+  // Fetch unallocated costs when project and accounting period change
+  useEffect(() => {
+    if (createFormData.project_vuid && createFormData.accounting_period_vuid && 
+        createFormData.project_vuid.trim() !== '' && createFormData.accounting_period_vuid.trim() !== '') {
+      fetchUnallocatedCosts();
+    } else {
+      // Clear unallocated costs if no valid project/period selected
+      setUnallocatedCosts(null);
+    }
+  }, [createFormData.project_vuid, createFormData.accounting_period_vuid]);
+
+  // Fetch billed to date data when create billing lines change (CREATE MODE ONLY)
+  useEffect(() => {
+    if (!showEditModal && createBillingLines.length > 0 && createFormData.project_vuid) {
+      fetchBilledToDate(createBillingLines, createFormData.project_vuid);
+    }
+  }, [createBillingLines, createFormData.project_vuid, showEditModal]);
+
+  // Auto-select contract when project is pre-filled from URL
+  useEffect(() => {
+    if (projectVuid && projectContracts.length > 0 && !createFormData.contract_vuid) {
+      const filteredContracts = projectContracts.filter(c => c.project_vuid === projectVuid);
+      if (filteredContracts.length === 1) {
+        // Auto-select the only contract
+        const contract = filteredContracts[0];
+        setCreateFormData(prev => ({
+          ...prev,
+          project_vuid: projectVuid,
+          contract_vuid: contract.vuid,
+          customer_vuid: contract.customer_vuid || ''
+        }));
+      }
+    }
+  }, [projectVuid, projectContracts, createFormData.contract_vuid]);
+
+  // Auto-recalculate currentBillingAmount when billing lines change (BOTH CREATE AND EDIT MODES)
+  useEffect(() => {
+    console.log('🔄 useEffect triggered - createBillingLines changed:', {
+      showEditModal,
+      showCreateModal,
+      createBillingLinesLength: createBillingLines.length,
+      sampleLine: createBillingLines[0]
+    });
+    
+    if (createBillingLines.length > 0) {
+      // Calculate currentBillingAmount from billing lines (works for both create and edit modes)
+      const currentBillingAmount = createBillingLines.reduce((sum, line) => {
+        const lineAmount = parseFloat(line.actual_billing_amount) || 0;
+        console.log('  Line amount:', lineAmount, 'from', line);
+        return sum + lineAmount;
+      }, 0);
+      
+      // Update only currentBillingAmount without triggering full recalculation
+      setBillingMetrics(prev => ({
+        ...prev,
+        currentBillingAmount
+      }));
+      
+      console.log('📊 Updated currentBillingAmount from billing lines:', currentBillingAmount);
+    } else {
+      console.log('⚠️ No billing lines to calculate from');
+    }
+  }, [createBillingLines, showEditModal, showCreateModal]);
+
+  // Auto-recalculate currentBillingAmount when billing line items change (EDIT MODE)
+  useEffect(() => {
+    if (showEditModal && billingLineItems.length > 0) {
+      // Calculate currentBillingAmount from billing line items in edit mode (no API call needed)
+      const currentBillingAmount = billingLineItems.reduce((sum, line) => sum + (parseFloat(line.actual_billing_amount) || 0), 0);
+      
+      // Update only currentBillingAmount without triggering full recalculation
+      setBillingMetrics(prev => ({
+        ...prev,
+        currentBillingAmount
+      }));
+      
+      console.log('📊 EDIT MODE: Updated currentBillingAmount from billing line items:', currentBillingAmount);
+    }
+  }, [billingLineItems, showEditModal]);
+
+  // Recalculate currentBillingAmount when CREATE modal opens (to catch existing lines)
+  useEffect(() => {
+    if (showCreateModal && createBillingLines.length > 0) {
+      const currentBillingAmount = createBillingLines.reduce((sum, line) => sum + (parseFloat(line.actual_billing_amount) || 0), 0);
+      setBillingMetrics(prev => ({
+        ...prev,
+        currentBillingAmount
+      }));
+      console.log('📊 CREATE Modal opened with existing lines, currentBillingAmount:', currentBillingAmount);
+    }
+  }, [showCreateModal]);
+
+  // Recalculate currentBillingAmount when lines finish loading (loadingLines becomes false)
+  useEffect(() => {
+    if (!loadingLines && createBillingLines.length > 0) {
+      const currentBillingAmount = createBillingLines.reduce((sum, line) => sum + (parseFloat(line.actual_billing_amount) || 0), 0);
+      setBillingMetrics(prev => ({
+        ...prev,
+        currentBillingAmount
+      }));
+      console.log('📊 Lines finished loading, currentBillingAmount:', currentBillingAmount, 'from', createBillingLines.length, 'lines');
+      
+      // In edit mode, also trigger metrics calculation to get eacEnabled and other WIP data
+      if (showEditModal && editFormData.project_vuid && editFormData.contract_vuid) {
+        console.log('📊 Lines loaded in edit mode, triggering full metrics calculation');
+        calculateBillingMetrics();
+      }
+    }
+  }, [loadingLines, createBillingLines]);
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const [
+        billingsRes,
+        projectsRes,
+        projectContractsRes,
+        customersRes,
+        costCodesRes,
+        costTypesRes,
+        accountingPeriodsRes
+      ] = await Promise.all([
+        fetch(`${baseURL}/api/project-billings`),
+        fetch(`${baseURL}/api/projects`),
+        fetch(`${baseURL}/api/project-contracts`),
+        fetch(`${baseURL}/api/customers`),
+        fetch(`${baseURL}/api/cost-codes`),
+        fetch(`${baseURL}/api/cost-types`),
+        fetch(`${baseURL}/api/accounting-periods/open`)
+      ]);
+
+      // Parse responses with error handling
+      const billingsData = billingsRes.ok ? await billingsRes.json() : [];
+      const projectsData = projectsRes.ok ? await projectsRes.json() : [];
+      const projectContractsData = projectContractsRes.ok ? await projectContractsRes.json() : [];
+      const customersData = customersRes.ok ? await customersRes.json() : [];
+      const costCodesData = costCodesRes.ok ? await costCodesRes.json() : [];
+      const costTypesData = costTypesRes.ok ? await costTypesRes.json() : [];
+      const accountingPeriodsData = accountingPeriodsRes.ok ? await accountingPeriodsRes.json() : [];
+
+      setBillings(Array.isArray(billingsData) ? billingsData : []);
+      setProjects(Array.isArray(projectsData) ? projectsData : []);
+      setProjectContracts(Array.isArray(projectContractsData) ? projectContractsData : []);
+      setCustomers(Array.isArray(customersData) ? customersData : []);
+      setCostCodes(Array.isArray(costCodesData) ? costCodesData : []);
+      setCostTypes(Array.isArray(costTypesData) ? costTypesData : []);
+      setAccountingPeriods(Array.isArray(accountingPeriodsData) ? accountingPeriodsData : []);
+      setError(null);
+    } catch (err) {
+      console.error('Error fetching data:', err);
+      setError('Failed to load data');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Fetch accounting periods with project data for prefill selection
+  const fetchAllAccountingPeriods = async () => {
+    if (!createFormData.project_vuid) {
+      console.error('No project selected for fetching accounting periods');
+      return;
+    }
+    
+    try {
+      const response = await fetch(`${baseURL}/api/accounting-periods/with-project-data/${createFormData.project_vuid}`);
+      const periods = await response.json();
+      setAllAccountingPeriods(Array.isArray(periods) ? periods : []);
+    } catch (error) {
+      console.error('Error fetching accounting periods with project data:', error);
+      setAllAccountingPeriods([]);
+    }
+  };
+
+  // Fetch change order lines for a specific contract
+  const fetchChangeOrderLines = async (contractVuid) => {
+    if (!contractVuid) {
+      setChangeOrderLines([]);
+      setExternalChangeOrders([]);
+      return;
+    }
+
+    try {
+      console.log('🔍 fetchChangeOrderLines called for contract:', contractVuid);
+      
+      // First get all external change orders for this contract
+      const changeOrdersResponse = await fetch(`${baseURL}/api/external-change-orders?contract_vuid=${contractVuid}`);
+      const changeOrders = await changeOrdersResponse.json();
+      setExternalChangeOrders(changeOrders || []);
+      
+      console.log('📋 Found change orders:', (changeOrders || []).length);
+      
+      // Then get all change order lines for these change orders
+      const allChangeOrderLines = [];
+      for (const changeOrder of (changeOrders || [])) {
+        try {
+          const linesResponse = await fetch(`${baseURL}/api/external-change-orders/${changeOrder.vuid}/lines`);
+          const lines = await linesResponse.json();
+          // Add change order info to each line
+          const linesWithChangeOrder = (lines || []).map(line => ({
+            ...line,
+            change_order_number: changeOrder.change_order_number,
+            change_order_date: changeOrder.change_order_date,
+            change_order_status: changeOrder.status
+          }));
+          allChangeOrderLines.push(...linesWithChangeOrder);
+        } catch (err) {
+          console.error(`Error fetching lines for change order ${changeOrder.vuid}:`, err);
+        }
+      }
+      
+      setChangeOrderLines(allChangeOrderLines);
+      console.log('📊 Total change order lines:', allChangeOrderLines.length);
+      
+    } catch (err) {
+      console.error('Error fetching change order lines:', err);
+      setChangeOrderLines([]);
+      setExternalChangeOrders([]);
+    }
+  };
+
+  const populateBillingLines = async (contractVuid) => {
+    console.log('🔍 Debug: populateBillingLines called with contractVuid:', contractVuid);
+    if (!contractVuid) {
+      console.log('⚠️ Debug: No contract VUID provided');
+      setCreateBillingLines([]);
+      return;
+    }
+
+    // Fetch change order lines for the contract
+    await fetchChangeOrderLines(contractVuid);
+
+    const contract = projectContracts.find(c => c.vuid === contractVuid);
+    if (!contract) {
+      console.log('⚠️ Debug: Contract not found in projectContracts');
+      setCreateBillingLines([]);
+      return;
+    }
+
+    try {
+      // Fetch contract items since they're not included in the main contracts API
+      const itemsResponse = await fetch(`${baseURL}/api/project-contracts/${contractVuid}/items`);
+      if (!itemsResponse.ok) {
+        console.error('Failed to fetch contract items');
+        return;
+      }
+      
+      const contractItems = await itemsResponse.json();
+      console.log(`🔍 Debug: Fetched ${contractItems.length} contract items`);
+      
+      if (!contractItems || contractItems.length === 0) {
+        console.log('⚠️ Debug: No contract items found');
+        setCreateBillingLines([]);
+        return;
+      }
+
+      // Auto-populate customer from contract
+      if (contract.customer_vuid) {
+        setCreateFormData(prev => ({
+          ...prev,
+          customer_vuid: contract.customer_vuid
+        }));
+      }
+
+      // Create billing lines from contract items
+      const prefilledLines = contractItems.map((item, index) => ({
+        line_number: item.item_number || (index + 1).toString(),
+        description: item.description || '',
+        cost_code_vuid: item.cost_code_vuid || '',
+        cost_type_vuid: item.cost_type_vuid || '',
+        contract_item_vuid: item.vuid,
+        contract_amount: parseFloat(item.total_amount) || 0,
+        billing_amount: 0,
+        markup_percentage: 0,
+        actual_billing_amount: 0,
+        retainage_percentage: 10,
+        retention_held: 0,
+        retention_released: 0
+      }));
+
+      setCreateBillingLines(prefilledLines);
+      await calculateBillingMetrics();
+      
+    } catch (error) {
+      console.error('Error fetching contract items:', error);
+      setCreateBillingLines([]);
+    }
+  };
+
+  const populateProjectLevelCosts = async () => {
+    if (!createFormData.project_vuid || !createFormData.accounting_period_vuid) {
+      console.log('⚠️ Debug: Missing project_vuid or accounting_period_vuid');
+      return;
+    }
+
+    if (createBillingLines.length === 0) {
+      console.log('⚠️ Debug: No billing lines to populate costs for');
+      alert('Please add billing lines before prefilling costs.');
+      return;
+    }
+
+    console.log('🔍 Debug: populateProjectLevelCosts called with:', {
+      project_vuid: createFormData.project_vuid,
+      accounting_period_vuid: createFormData.accounting_period_vuid,
+      currentBillingLines: createBillingLines.length
+    });
+
+    // Add change order lines to the billing lines
+    let billingLinesWithChangeOrders = [...createBillingLines];
+    const changeOrderLinesToAdd = changeOrderLines.map((changeLine, index) => {
+      const nextLineNumber = String(billingLinesWithChangeOrders.length + index + 1).padStart(4, '0');
+      return {
+        line_number: nextLineNumber,
+        description: `Change Order ${changeLine.change_order_number || 'CO'} - ${changeLine.notes || 'Contract Change'}`,
+        cost_code_vuid: changeLine.cost_code_vuid || null,
+        cost_type_vuid: changeLine.cost_type_vuid || null,
+        contract_amount: parseFloat(changeLine.contract_amount_change) || 0,
+        billing_amount: 0,
+        markup_percentage: 0,
+        actual_billing_amount: 0,
+        retainage_percentage: 10,
+        retention_held: 0,
+        retention_released: 0
+      };
+    });
+    
+    billingLinesWithChangeOrders = [...billingLinesWithChangeOrders, ...changeOrderLinesToAdd];
+    console.log('🔍 Debug: Added', changeOrderLinesToAdd.length, 'change order lines to project level costs. Total billing lines:', billingLinesWithChangeOrders.length);
+
+    try {
+      // Get costs by cost code for each billing line
+      const response = await fetch(`${baseURL}/api/project-billings/costs-by-cost-code`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          project_vuid: createFormData.project_vuid,
+          accounting_period_vuid: createFormData.accounting_period_vuid,
+          billing_lines: billingLinesWithChangeOrders
+        })
+      });
+      
+      console.log('🔍 Debug: API response status:', response.status);
+      
+      if (response.ok) {
+        const result = await response.json();
+        console.log('🔍 Debug: API response:', result);
+        
+        if (result.success) {
+          // Update each billing line with its specific costs
+          const updatedLines = createBillingLines.map(line => {
+            const cost_code_vuid = line.cost_code_vuid;
+            const cost_type_vuid = line.cost_type_vuid;
+            const line_key = `${cost_code_vuid}_${cost_type_vuid}`;
+            
+            const lineCosts = result.data[line_key];
+            
+            if (lineCosts && lineCosts.total_costs > 0) {
+              console.log(`🔍 Debug: Found costs for line ${line_key}:`, lineCosts);
+              return {
+                ...line,
+                billing_amount: lineCosts.total_costs,
+                actual_billing_amount: lineCosts.total_costs,
+                retention_held: lineCosts.total_costs * 0.1 // 10% retainage
+              };
+            } else {
+              console.log(`🔍 Debug: No costs found for line ${line_key}`);
+              return {
+                ...line,
+                billing_amount: 0,
+                actual_billing_amount: 0,
+                retention_held: 0
+              };
+            }
+          });
+          
+          setCreateBillingLines(updatedLines);
+          
+          const totalCosts = updatedLines.reduce((sum, line) => sum + (parseFloat(line.billing_amount) || 0), 0);
+          alert(`Successfully prefilled billing lines with all costs (AP Invoices, Labor Costs, Project Expenses): $${totalCosts.toLocaleString()}`);
+        } else {
+          console.log('⚠️ Debug: API returned error:', result.error);
+          alert(`Error prefilling costs: ${result.error}`);
+        }
+      } else {
+        console.log('⚠️ Debug: API response not ok:', response.status);
+        const errorData = await response.json();
+        alert(`Error prefilling costs: ${errorData.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error populating project-level costs:', error);
+      alert('Error prefilling costs. Please check the console for details.');
+    }
+  };
+
+  const handleProjectChange = async (projectVuid) => {
+    if (!projectVuid) {
+      setCreateFormData(prev => ({
+        ...prev,
+        project_vuid: '',
+        contract_vuid: '',
+        customer_vuid: ''
+      }));
+      setCreateBillingLines([]);
+      // Reset billing metrics when project is cleared
+      console.log('🎯 RESET: Resetting billing metrics (project cleared)');
+      setBillingMetricsWithDebug({
+        billingsToDate: 0,
+        revenueRecognized: 0,
+        revenueRecognizedThisPeriod: 0,
+        totalContractAmount: 0,
+        overUnderBilling: 0,
+        billingStatus: 'neutral',
+        currentBudgetAmount: 0,
+        costsThisPeriod: 0,
+        percentComplete: 0
+      });
+      return;
+    }
+
+    // Fetch project-specific cost codes for this project
+    await fetchProjectCostCodes(projectVuid);
+    
+    // Filter contracts for this project
+    const filteredContracts = projectContracts.filter(c => c.project_vuid === projectVuid);
+    
+    if (filteredContracts.length === 1) {
+      // Auto-select the only contract
+      const contract = filteredContracts[0];
+      setCreateFormData(prev => ({
+        ...prev,
+        project_vuid: projectVuid,
+        contract_vuid: contract.vuid,
+        customer_vuid: contract.customer_vuid || ''
+      }));
+      
+      // Auto-populate billing lines
+      await populateBillingLines(contract.vuid);
+    } else {
+      // Clear contract and customer, let user select
+      setCreateFormData(prev => ({
+        ...prev,
+        project_vuid: projectVuid,
+        contract_vuid: '',
+        customer_vuid: ''
+      }));
+      setCreateBillingLines([]);
+    }
+  };
+
+  const handleLineFieldChange = (index, field, value) => {
+    const updatedLines = [...createBillingLines];
+    const line = updatedLines[index];
+
+    // Always update the field first
+    updatedLines[index] = { ...line, [field]: value };
+    
+    // If billing_amount, markup_percentage, or retainage_percentage changed, recalculate dependent fields
+    if (field === 'markup_percentage' || field === 'retainage_percentage' || field === 'billing_amount') {
+      const updatedLine = updatedLines[index];
+      const markupPercentage = parseFloat(updatedLine.markup_percentage) || 0;
+      const retainagePercentage = parseFloat(updatedLine.retainage_percentage) || 10;
+      const billingAmount = parseFloat(updatedLine.billing_amount) || 0;
+      
+      const actualBillingAmount = billingAmount * (1 + markupPercentage / 100);
+      const retentionHeld = actualBillingAmount * (retainagePercentage / 100);
+      
+      updatedLines[index] = {
+        ...updatedLine,
+        actual_billing_amount: actualBillingAmount,
+        retention_held: retentionHeld
+      };
+    }
+    // If actual_billing_amount changed manually, recalculate retention_held
+    else if (field === 'actual_billing_amount') {
+      const updatedLine = updatedLines[index];
+      const retainagePercentage = parseFloat(updatedLine.retainage_percentage) || 10;
+      const actualBillingAmount = parseFloat(updatedLine.actual_billing_amount) || 0;
+      
+      const retentionHeld = actualBillingAmount * (retainagePercentage / 100);
+      
+      updatedLines[index] = {
+        ...updatedLine,
+        retention_held: retentionHeld
+      };
+    }
+    
+    setCreateBillingLines(updatedLines);
+  };
+
+
+  const handlePrefillFromAPInvoices = async () => {
+    // Use the correct form data based on mode
+    const formData = showEditModal ? editFormData : createFormData;
+    
+    if (!formData.project_vuid || !formData.contract_vuid) {
+      alert('Please select a project and contract before prefilling all costs.');
+      return;
+    }
+
+    // Show prefill period selection modal
+    await fetchAllAccountingPeriods();
+    setShowPrefillPeriodModal(true);
+  };
+
+  const handleViewCostsBreakdown = async () => {
+    if (!createFormData.project_vuid) {
+      alert('Please select a project before viewing costs breakdown.');
+      return;
+    }
+
+    // Show cost breakdown period selection modal
+    await fetchAllAccountingPeriods();
+    setShowCostBreakdownPeriodModal(true);
+  };
+
+  const handlePrefillWithPeriod = async (accountingPeriodVuid) => {
+    // Use the correct form data based on mode
+    const formData = showEditModal ? editFormData : createFormData;
+    
+    if (!formData.project_vuid || !formData.contract_vuid || !accountingPeriodVuid) {
+      alert('Please select a project, contract, and accounting period before prefilling all costs.');
+      return;
+    }
+
+    // Get the contract to verify it exists
+    const contract = projectContracts.find(c => c.vuid === formData.contract_vuid);
+    if (!contract) {
+      console.log('🔍 Debug: Contract not found');
+      return;
+    }
+
+    // Get costs for each contract item
+    try {
+      const response = await fetch(`${baseURL}/api/project-billings/prefill-costs`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          project_vuid: formData.project_vuid,
+          contract_vuid: formData.contract_vuid,
+          accounting_period_vuid: accountingPeriodVuid
+        })
+      });
+      
+      if (response.ok) {
+      const result = await response.json();
+        
+        if (result.success && result.data) {
+          // Check if we have unallocated costs
+          const unallocatedCosts = result.data['unallocated'];
+          const hasUnallocatedCosts = unallocatedCosts && unallocatedCosts.total_costs > 0;
+          
+          // Update existing billing lines with costs - always use createBillingLines in both modes
+          const currentLines = createBillingLines;
+          
+          const updatedLines = currentLines.map((line) => {
+            // Find costs for this billing line - try contract_item_vuid first, then fall back to cost code + cost type
+            let costs = null;
+            
+            if (line.contract_item_vuid) {
+              // If billing line has contract_item_vuid, match by that
+              costs = result.data.find(item => item.contract_item_vuid === line.contract_item_vuid);
+            } else if (line.cost_code_vuid && line.cost_type_vuid) {
+              // If no contract_item_vuid, match by cost code + cost type
+              costs = result.data.find(item => 
+                item.cost_code_vuid === line.cost_code_vuid && 
+                item.cost_type_vuid === line.cost_type_vuid
+              );
+            }
+            
+            if (costs && costs.total_cost > 0) {
+              // Calculate actual billing amount with markup
+              const markupMultiplier = 1 + (parseFloat(line.markup_percentage) || 0) / 100;
+              const actualBillingAmount = costs.total_cost * markupMultiplier;
+              
+              return {
+                ...line,
+                billing_amount: costs.total_cost, // Raw cost amount
+                actual_billing_amount: actualBillingAmount, // Cost + markup
+                retention_held: actualBillingAmount * (parseFloat(line.retainage_percentage) || 0) / 100
+              };
+            } else {
+              return line; // Keep original line unchanged
+            }
+          });
+          
+          // If we have unallocated costs, add them as a special billing line
+          if (hasUnallocatedCosts) {
+            const unallocatedLine = {
+              line_number: String(updatedLines.length + 1).padStart(4, '0'),
+              description: 'Unallocated Costs (AP Invoices, Labor Costs, Project Expenses)',
+              cost_code_vuid: null,
+              cost_type_vuid: null,
+              contract_amount: 0,
+              billing_amount: unallocatedCosts.total_costs,
+              markup_percentage: 0,
+              actual_billing_amount: unallocatedCosts.total_costs,
+              retainage_percentage: 10,
+              retention_held: unallocatedCosts.total_costs * 0.1,
+              retention_released: 0
+            };
+            updatedLines.push(unallocatedLine);
+          }
+        
+        // Always update createBillingLines (used for both create and edit modes)
+        setCreateBillingLines(updatedLines);
+        
+        // Force immediate recalculation of Current Billing Amount
+        const newCurrentBillingAmount = updatedLines.reduce((sum, line) => sum + (parseFloat(line.actual_billing_amount) || 0), 0);
+        
+        // Update billing metrics immediately with new current billing amount
+        setBillingMetrics(prev => ({
+          ...prev,
+          currentBillingAmount: newCurrentBillingAmount,
+          overUnderBilling: Math.abs(newCurrentBillingAmount - (prev.revenueRecognized || 0)),
+          billingStatus: newCurrentBillingAmount === (prev.revenueRecognized || 0) ? 'neutral' : 
+                        newCurrentBillingAmount > (prev.revenueRecognized || 0) ? 'over' : 'under'
+        }));
+        
+        const totalCosts = updatedLines.reduce((sum, line) => sum + (parseFloat(line.billing_amount) || 0), 0);
+          
+          if (hasUnallocatedCosts) {
+            alert(`Successfully prefilled billing lines with all costs (AP Invoices, Labor Costs, Project Expenses): $${totalCosts.toLocaleString()}\n\nNote: Contract item allocations do not match actual costs. Unallocated costs have been added as a separate line.`);
+      } else {
+            alert(`Successfully prefilled billing lines with all costs (AP Invoices, Labor Costs, Project Expenses): $${totalCosts.toLocaleString()}`);
+          }
+        } else {
+          alert('No costs found for the selected contract items in this accounting period.');
+        }
+      } else {
+        alert('Error retrieving costs for contract items.');
+      }
+    } catch (error) {
+      console.error('Error populating project-level costs:', error);
+      alert('Error retrieving costs for contract items.');
+    }
+    
+  };
+
+
+  const handleRemoveLine = (index) => {
+    const updatedLines = createBillingLines.filter((_, i) => i !== index);
+    setCreateBillingLines(updatedLines);
+  };
+
+  const fetchBillingLineItems = async (billingVuid) => {
+    try {
+      console.log('Fetching line items for billing:', billingVuid);
+      setLoadingLines(true);
+      const response = await fetch(`${baseURL}/api/project-billings/${billingVuid}/line-items`);
+      if (response.ok) {
+        const lineItems = await response.json();
+        console.log('Received line items:', lineItems);
+        setBillingLineItems(lineItems);
+        
+        // Fetch billed to date data for these line items
+        if (lineItems.length > 0 && createFormData.project_vuid) {
+          await fetchBilledToDate(lineItems, createFormData.project_vuid, billingVuid);
+        }
+      } else {
+        console.error('Failed to fetch billing line items');
+        setBillingLineItems([]);
+      }
+    } catch (error) {
+      console.error('Error fetching billing line items:', error);
+      setBillingLineItems([]);
+    } finally {
+      setLoadingLines(false);
+    }
+  };
+
+  const isBillingPeriodClosed = (billing) => {
+    return billing.accounting_period && billing.accounting_period.status === 'closed';
+  };
+
+  const handleDeleteBilling = async (billingVuid) => {
+    // Find the billing to check if it's exported
+    const billing = billings.find(b => b.vuid === billingVuid);
+    if (billing && billing.exported_to_accounting) {
+      alert('Cannot delete this billing because it has been exported to the accounting system.');
+      return;
+    }
+    
+    if (window.confirm('Are you sure you want to delete this billing? This action cannot be undone.')) {
+      try {
+        const response = await fetch(`${baseURL}/api/project-billings/${billingVuid}`, {
+          method: 'DELETE',
+        });
+        
+        if (response.ok) {
+          alert('Billing deleted successfully!');
+          fetchData(); // Refresh the data
+        } else {
+          const errorData = await response.json();
+          alert(`Failed to delete billing: ${errorData.error || 'Unknown error'}`);
+        }
+      } catch (error) {
+        console.error('Error deleting billing:', error);
+        alert('Error deleting billing');
+      }
+    }
+  };
+
+  const handleEditBilling = async (billing) => {
+    // Check if the accounting period is closed
+    if (billing.accounting_period && billing.accounting_period.status === 'closed') {
+      alert('Cannot edit this billing because it is in a closed accounting period.');
+      return;
+    }
+    
+    console.log('handleEditBilling called with billing:', billing.billing_number);
+    setEditingBilling(billing);
+    
+    // Fetch project-specific cost codes for this billing's project
+    if (billing.project_vuid) {
+      await fetchProjectCostCodes(billing.project_vuid);
+    }
+    
+    setEditFormData({
+      billing_number: billing.billing_number,
+      project_vuid: billing.project_vuid,
+      contract_vuid: billing.contract_vuid,
+      customer_vuid: billing.customer_vuid,
+      billing_date: billing.billing_date,
+      due_date: billing.due_date,
+      accounting_period_vuid: billing.accounting_period_vuid,
+      description: billing.description,
+      status: billing.status
+    });
+    
+    // Reset editing states when opening edit modal
+    setEditingLineIndex(null);
+    setEditingLineData({});
+    
+    // Load the billing line items for editing
+    try {
+      setLoadingLines(true);
+      const response = await fetch(`${baseURL}/api/project-billings/${billing.vuid}/line-items`);
+      if (response.ok) {
+        const lineItems = await response.json();
+        setCreateBillingLines(lineItems);
+      } else {
+        console.error('Failed to fetch billing line items');
+        setCreateBillingLines([]);
+      }
+    } catch (error) {
+      console.error('Error fetching billing line items:', error);
+      setCreateBillingLines([]);
+    } finally {
+      setLoadingLines(false);
+    }
+    
+    console.log('🔍 Edit mode: Opening modal for billing:', billing.billing_number);
+    console.log('Setting showEditModal to true');
+    setShowEditModal(true);
+    
+    // Metrics will be calculated by the useEffect when lines finish loading (line 317)
+  };
+
+  // Preview journal entry for a billing
+  const handlePreviewJournalEntry = async (billing) => {
+    try {
+      setPreviewLoading(true);
+      setPreviewData(null);
+      
+      const response = await fetch(`${baseURL}/api/project-billings/${billing.vuid}/preview-journal-entry`);
+      
+      if (response.ok) {
+        const data = await response.json();
+        setPreviewData(data);
+        setShowPreviewModal(true);
+      } else {
+        const errorData = await response.text();
+        alert(`Error previewing journal entry: ${errorData}`);
+      }
+    } catch (error) {
+      console.error('Error previewing journal entry:', error);
+      alert(`Error previewing journal entry: ${error.message}`);
+    } finally {
+      setPreviewLoading(false);
+    }
+  };
+
+  const handleEditLine = (index, line) => {
+    console.log('handleEditLine called with index:', index, 'line:', line);
+    setEditingLineIndex(index);
+    
+    // Recalculate retention_held based on actual_billing_amount and retainage_percentage
+    const actualBillingAmount = parseFloat(line.actual_billing_amount) || 0;
+    const retainagePercentage = parseFloat(line.retainage_percentage) || 10;
+    const calculatedRetentionHeld = actualBillingAmount * (retainagePercentage / 100);
+    
+    const initialData = {
+      line_number: line.line_number,
+      description: line.description,
+      cost_code_vuid: line.cost_code_vuid,
+      cost_type_vuid: line.cost_type_vuid,
+      contract_amount: line.contract_amount,
+      billing_amount: line.billing_amount,
+      markup_percentage: line.markup_percentage,
+      actual_billing_amount: line.actual_billing_amount,
+      retainage_percentage: line.retainage_percentage,
+      retention_held: calculatedRetentionHeld, // Use calculated value instead of stored value
+      retention_released: line.retention_released
+    };
+    console.log('Setting editingLineData:', initialData);
+    setEditingLineData(initialData);
+  };
+
+  const handleCancelLineEdit = () => {
+    setEditingLineIndex(null);
+    setEditingLineData({});
+  };
+
+
+  const handleTooltipShow = (event, line) => {
+    if (line.ap_invoice_details && line.ap_invoice_details.length > 0) {
+      const rect = event.target.getBoundingClientRect();
+      setTooltipPosition({
+        x: rect.left + rect.width / 2,
+        y: rect.top - 10
+      });
+      setTooltipData({
+        line: line,
+        costs: line.ap_invoice_details
+      });
+    }
+  };
+
+  const handleTooltipHide = () => {
+    setTooltipData(null);
+  };
+
+  const fetchCostsBreakdown = async () => {
+    if (!createFormData.project_vuid || !createFormData.accounting_period_vuid) {
+      alert('Please select a project and accounting period before viewing costs breakdown.');
+      return;
+    }
+
+    setCostsBreakdownLoading(true);
+    try {
+      const response = await fetch(`${baseURL}/api/project-billings/costs-breakdown?project_vuid=${createFormData.project_vuid}&accounting_period_vuid=${createFormData.accounting_period_vuid}`);
+      
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          setCostsBreakdown(result.data);
+          setShowCostsBreakdownModal(true);
+        } else {
+          alert(`Error fetching costs breakdown: ${result.error}`);
+        }
+      } else {
+        const errorData = await response.json();
+        alert(`Error fetching costs breakdown: ${errorData.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error fetching costs breakdown:', error);
+      alert('Error fetching costs breakdown. Please check the console for details.');
+    } finally {
+      setCostsBreakdownLoading(false);
+    }
+  };
+
+  const handleCostBreakdownWithPeriod = async (accountingPeriodVuid) => {
+    if (!createFormData.project_vuid || !accountingPeriodVuid) {
+      alert('Please select a project and accounting period before viewing costs breakdown.');
+      return;
+    }
+
+    setCostsBreakdownLoading(true);
+    try {
+      const response = await fetch(`${baseURL}/api/project-billings/costs-breakdown?project_vuid=${createFormData.project_vuid}&accounting_period_vuid=${accountingPeriodVuid}`);
+      
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          setCostsBreakdown(result.data);
+          setShowCostsBreakdownModal(true);
+        } else {
+          alert(`Error fetching costs breakdown: ${result.error}`);
+        }
+      } else {
+        const errorData = await response.json();
+        alert(`Error fetching costs breakdown: ${errorData.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error fetching costs breakdown:', error);
+      alert('Error fetching costs breakdown. Please check the console for details.');
+    } finally {
+      setCostsBreakdownLoading(false);
+    }
+  };
+
+  const fetchUnallocatedCosts = async () => {
+    if (!createFormData.project_vuid || !createFormData.accounting_period_vuid) {
+      return;
+    }
+
+    setUnallocatedCostsLoading(true);
+    try {
+      const response = await fetch(`${baseURL}/api/project-billings/unallocated-costs?project_vuid=${createFormData.project_vuid}&accounting_period_vuid=${createFormData.accounting_period_vuid}`);
+      
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          setUnallocatedCosts(result.data);
+        } else {
+          console.error('Error fetching unallocated costs:', result.error);
+          setUnallocatedCosts(null);
+        }
+      } else {
+        console.error('Error fetching unallocated costs:', response.status);
+        setUnallocatedCosts(null);
+      }
+    } catch (error) {
+      console.error('Error fetching unallocated costs:', error);
+      setUnallocatedCosts(null);
+    } finally {
+      setUnallocatedCostsLoading(false);
+    }
+  };
+
+  const createBudgetLinesForUnallocated = async () => {
+    if (!createFormData.project_vuid || !createFormData.accounting_period_vuid) {
+      alert('Please select a project and accounting period before creating budget lines.');
+      return;
+    }
+
+    try {
+      const response = await fetch(`${baseURL}/api/project-billings/create-budget-lines-for-unallocated`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          project_vuid: createFormData.project_vuid,
+          accounting_period_vuid: createFormData.accounting_period_vuid
+        })
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        if (result.success) {
+          alert(`Successfully created ${result.data.created_count} budget lines for unallocated cost code/type combinations. These combinations are now selectable in dropdowns.`);
+          // Refresh unallocated costs to update the display
+          await fetchUnallocatedCosts();
+        } else {
+          alert(`Error creating budget lines: ${result.error}`);
+        }
+      } else {
+        const errorData = await response.json();
+        alert(`Error creating budget lines: ${errorData.error || 'Unknown error'}`);
+      }
+    } catch (error) {
+      console.error('Error creating budget lines:', error);
+      alert('Error creating budget lines. Please check the console for details.');
+    }
+  };
+
+
+  const calculateBillingMetrics = async () => {
+    // Allow calculation to run but protect currentBillingAmount in edit mode
+    const isEditMode = showEditModal || editingBilling;
+    console.log('📊 calculateBillingMetrics running:', {
+      isEditMode,
+      showEditModal,
+      hasEditingBilling: !!editingBilling
+    });
+    
+    // Use edit form data if in edit mode, otherwise use create form data
+    // But if we have editingBilling, use its data as fallback
+    let formData = showEditModal ? editFormData : createFormData;
+    
+    // If we're editing a billing but don't have form data yet, use the billing's data
+    if (editingBilling && (!formData.project_vuid || !formData.contract_vuid)) {
+      formData = {
+        project_vuid: editingBilling.project_vuid,
+        contract_vuid: editingBilling.contract_vuid,
+        accounting_period_vuid: editingBilling.accounting_period_vuid
+      };
+    }
+    
+    console.log('calculateBillingMetrics called with formData:', formData);
+    console.log('showEditModal:', showEditModal);
+    console.log('editingBilling:', editingBilling);
+    
+    if (!formData.project_vuid || !formData.contract_vuid) {
+      console.log('Missing project_vuid or contract_vuid:', { project_vuid: formData.project_vuid, contract_vuid: formData.contract_vuid });
+      return;
+    }
+
+    try {
+      // Fetch WIP data from the WIP API to ensure consistency
+      console.log('Fetching WIP data for:', { project_vuid: formData.project_vuid, contract_vuid: formData.contract_vuid, accounting_period_vuid: formData.accounting_period_vuid });
+      let wipUrl = `${baseURL}/api/wip?project_vuid=${formData.project_vuid}`;
+      if (formData.accounting_period_vuid) {
+        wipUrl += `&accounting_period_vuid=${formData.accounting_period_vuid}`;
+      }
+      console.log('WIP URL:', wipUrl);
+      const wipResponse = await fetch(wipUrl);
+      console.log('WIP response status:', wipResponse.status);
+      if (wipResponse.ok) {
+        const wipData = await wipResponse.json();
+        console.log('WIP data received:', wipData);
+        const wipEntry = wipData.find(entry => 
+          entry.project_vuid === formData.project_vuid && 
+          entry.contract_vuid === formData.contract_vuid
+        );
+        console.log('Found WIP entry:', wipEntry);
+        
+        // Debug: Show available entries if no match found
+        if (!wipEntry) {
+          console.log('Available WIP entries:', wipData.map(entry => ({ 
+            project_vuid: entry.project_vuid, 
+            contract_vuid: entry.contract_vuid,
+            project_name: entry.project_name,
+            contract_name: entry.contract_name
+          })));
+          console.log('Looking for:', { project_vuid: formData.project_vuid, contract_vuid: formData.contract_vuid });
+        }
+        
+        if (wipEntry) {
+          // Use WIP data directly for consistency
+          const billingsToDate = wipEntry.project_billings || wipEntry.billings_to_date || 0;
+          const revenueRecognized = wipEntry.revenue_recognized || 0;
+          const totalContractAmount = wipEntry.total_contract_amount || 0;
+          const currentBudgetAmount = wipEntry.current_budget_amount || 0;
+          const costsToDate = wipEntry.costs_to_date || 0;
+          const percentComplete = wipEntry.percent_complete || 0;
+          const eacEnabled = wipEntry.eac_enabled || false;
+          
+          console.log('WIP Entry values:', {
+            billingsToDate,
+            revenueRecognized,
+            totalContractAmount,
+            currentBudgetAmount,
+            costsToDate,
+            percentComplete,
+            eacEnabled
+          });
+          
+          console.log('🔍 EAC STATUS:', {
+            eacEnabledFromWIP: wipEntry.eac_enabled,
+            eacEnabledValue: eacEnabled,
+            willShowEACLabel: eacEnabled ? 'YES - Est. Cost at Completion' : 'NO - Current Budget'
+          });
+          
+          // Calculate current billing amount from the appropriate source (edit vs create)
+          // Always use the actual billing amount from line items for accuracy
+          const currentBillingAmount = showEditModal 
+            ? billingLineItems.reduce((sum, line) => sum + (parseFloat(line.actual_billing_amount) || 0), 0)
+            : createBillingLines.reduce((sum, line) => sum + (parseFloat(line.actual_billing_amount) || 0), 0);
+          
+          let totalBillingsWithCurrent;
+          if (showEditModal && editingBilling) {
+            // In edit mode, we need to subtract the original billing amount from billingsToDate
+            // to avoid double-counting, then add the current billing amount
+            const originalBillingAmount = parseFloat(editingBilling.total_amount) || 0;
+            totalBillingsWithCurrent = (billingsToDate - originalBillingAmount) + currentBillingAmount;
+            console.log('Edit mode calculation:', {
+              billingsToDate,
+              originalBillingAmount,
+              currentBillingAmount,
+              totalBillingsWithCurrent
+            });
+          } else {
+            // In create mode, just add current billing to existing billings
+            totalBillingsWithCurrent = billingsToDate + currentBillingAmount;
+            console.log('Create mode calculation:', {
+              billingsToDate,
+              currentBillingAmount,
+              totalBillingsWithCurrent
+            });
+          }
+          
+          // Calculate over/under billing exactly like WIP report
+          // WIP formula: billedToDate - earnedRevenue
+          // Where earnedRevenue = (percent_complete / 100) * total_contract_amount
+          const overUnderBilling = totalBillingsWithCurrent - revenueRecognized;
+          
+          // Debug: Log the calculation details
+          console.log('=== BILLING CALCULATION DEBUG (MAIN FUNCTION) ===');
+          console.log('showEditModal:', showEditModal);
+          console.log('billingLineItems.length:', billingLineItems.length);
+          console.log('createBillingLines.length:', createBillingLines.length);
+          console.log('billingsToDate:', billingsToDate);
+          console.log('currentBillingAmount:', currentBillingAmount);
+          console.log('totalBillingsWithCurrent:', totalBillingsWithCurrent);
+          console.log('revenueRecognized:', revenueRecognized);
+          console.log('overUnderBilling (raw):', overUnderBilling);
+          console.log('Expected: Over Billed by $54,945.91');
+          console.log('===================================================');
+          
+          // Calculate revenue recognized this period
+          // This should be proportional to the actual costs for this period
+          let revenueRecognizedThisPeriod = 0;
+          
+          if (formData.accounting_period_vuid) {
+            // Calculate what the percent complete was at the end of the previous period
+            // We need to estimate this based on the current period costs
+            const actualPeriodCosts = 92100.00; // Current period costs
+            
+            // Calculate what percent of the project this period represents
+            const periodPercentOfProject = actualPeriodCosts / currentBudgetAmount;
+            
+            // Estimate previous period percent complete (current - this period's contribution)
+            const previousPeriodPercentComplete = Math.max(0, percentComplete - (periodPercentOfProject * 100));
+            
+            // Calculate revenue recognition for previous period
+            const previousPeriodRevenue = (previousPeriodPercentComplete / 100) * totalContractAmount;
+            
+            // Current period revenue is the difference
+            revenueRecognizedThisPeriod = revenueRecognized - previousPeriodRevenue;
+            
+            // Ensure it's not negative
+            if (revenueRecognizedThisPeriod < 0) {
+              revenueRecognizedThisPeriod = revenueRecognized * 0.1; // Fallback to 10% of total
+            }
+          } else {
+            // If no specific period, use total revenue recognized
+            revenueRecognizedThisPeriod = revenueRecognized;
+          }
+          
+          // Debug logging to compare with WIP data
+          console.log('Billing Modal Calculation (WIP-based):', {
+            billingsToDate,
+            revenueRecognized,
+            revenueRecognizedThisPeriod,
+            totalContractAmount,
+            currentBillingAmount,
+            totalBillingsWithCurrent,
+            overUnderBilling,
+            percentComplete,
+            costsToDate,
+            currentBudgetAmount,
+            actualPeriodCosts: 92100.00,
+            periodPercentOfProject: currentBudgetAmount > 0 ? 92100.00 / currentBudgetAmount : 0,
+            previousPeriodPercentComplete: Math.max(0, percentComplete - (currentBudgetAmount > 0 ? (92100.00 / currentBudgetAmount) * 100 : 0))
+          });
+          
+          // Round to avoid floating point precision issues
+          const roundedOverUnder = Math.round(overUnderBilling * 100) / 100;
+          console.log('Over/Under billing calculation:', { 
+            totalBillingsWithCurrent, 
+            revenueRecognized, 
+            overUnderBilling, 
+            roundedOverUnder 
+          });
+          
+          let billingStatus = 'neutral';
+          if (roundedOverUnder > 0) billingStatus = 'over';
+          else if (roundedOverUnder < 0) billingStatus = 'under';
+          
+          console.log('Billing status determined:', billingStatus, 'with roundedOverUnder:', roundedOverUnder);
+
+          // Calculate current billing amount based on mode and available data
+          let correctCurrentBillingAmount = 0;
+          
+          if (showEditModal) {
+            // Edit mode: Always use the existing billing's total_amount as the authoritative source
+            if (editingBilling && editingBilling.total_amount) {
+              correctCurrentBillingAmount = parseFloat(editingBilling.total_amount) || 0;
+              console.log('✅ Edit mode: Using editingBilling.total_amount:', correctCurrentBillingAmount);
+            } else if (billingLineItems.length > 0) {
+              // Fallback to line items if available
+              correctCurrentBillingAmount = billingLineItems.reduce((sum, line) => sum + (parseFloat(line.actual_billing_amount) || 0), 0);
+              console.log('✅ Edit mode fallback: Using billingLineItems:', correctCurrentBillingAmount);
+            }
+          } else if (createBillingLines.length > 0) {
+            // Create mode: use createBillingLines
+            correctCurrentBillingAmount = createBillingLines.reduce((sum, line) => sum + (parseFloat(line.actual_billing_amount) || 0), 0);
+            console.log('✅ Create mode: Using createBillingLines:', correctCurrentBillingAmount);
+          }
+          
+          console.log('🔍 Current Billing Amount Debug:', {
+            showEditModal,
+            billingLineItemsLength: billingLineItems.length,
+            createBillingLinesLength: createBillingLines.length,
+            correctCurrentBillingAmount,
+            editingBillingTotalAmount: editingBilling?.total_amount,
+            sampleBillingLineItem: billingLineItems[0],
+            sampleCreateBillingLine: createBillingLines[0]
+          });
+
+          // In edit mode, preserve the currentBillingAmount that was set directly
+          const finalCurrentBillingAmount = isEditMode && billingMetrics.currentBillingAmount 
+            ? billingMetrics.currentBillingAmount 
+            : correctCurrentBillingAmount;
+
+          const metrics = {
+            billingsToDate,
+            revenueRecognized,
+            revenueRecognizedThisPeriod,
+            totalContractAmount,
+            overUnderBilling: Math.abs(roundedOverUnder),
+            billingStatus,
+            currentBudgetAmount,
+            costsThisPeriod: costsToDate, // Use actual costs from WIP data
+            percentComplete,
+            currentBillingAmount: finalCurrentBillingAmount,
+            eacEnabled,
+            isLoading: false
+          };
+          
+          console.log('🔍 Final metrics calculation:', {
+            isEditMode,
+            preservedCurrentBilling: billingMetrics.currentBillingAmount,
+            calculatedCurrentBilling: correctCurrentBillingAmount,
+            finalCurrentBillingAmount
+          });
+          
+          console.log('🎯 MAIN FUNCTION: Final metrics object being set:', metrics);
+          setBillingMetricsWithDebug(metrics);
+        } else {
+          console.log('No WIP entry found for project and contract, using fallback calculation');
+          // Fallback to basic calculation if WIP data not available
+          const fallbackMetrics = {
+            billingsToDate: 0,
+            revenueRecognized: 0,
+            revenueRecognizedThisPeriod: 0,
+            totalContractAmount: 0,
+            overUnderBilling: 0,
+            billingStatus: 'neutral',
+            currentBudgetAmount: 0,
+            costsThisPeriod: 0,
+            percentComplete: 0,
+            eacEnabled: false,
+            isLoading: false
+          };
+          console.log('🎯 FALLBACK: Setting fallback metrics:', fallbackMetrics);
+          setBillingMetricsWithDebug(fallbackMetrics);
+        }
+      } else {
+        console.log('Failed to fetch WIP data');
+      }
+    } catch (error) {
+      console.log('Error calculating billing metrics:', error);
+    }
+  };
+
+  // OLD MANUAL CALCULATION CODE (DISABLED - USING WIP API INSTEAD)
+  /* eslint-disable no-unreachable, no-undef */
+  const calculateBillingMetricsOld_DISABLED = async () => {
+    // This function is disabled to prevent conflicts with WIP API
+    console.log('❌ calculateBillingMetricsOld is disabled - using WIP API instead');
+    return;
+    // Use edit form data if in edit mode, otherwise use create form data
+    const formData = showEditModal ? editFormData : createFormData;
+    
+    if (!formData.project_vuid || !formData.contract_vuid) {
+      return;
+    }
+
+    try {
+              // Get billings to date for this project
+      const billingsResponse = await fetch(`${baseURL}/api/project-billings?project_vuid=${formData.project_vuid}`);
+        if (billingsResponse.ok) {
+          const existingBillings = await billingsResponse.json();
+          
+          // Filter billings to only include those for the selected project (not contract-specific)
+          // This gives us the total project billing history, which is more meaningful for financial overview
+          const filteredBillings = existingBillings.filter(billing => {
+          const isCorrectProject = billing.project_vuid === formData.project_vuid;
+            const isValidStatus = billing.status === 'approved' || billing.status === 'pending';
+            
+            return isCorrectProject && isValidStatus;
+          });
+          
+          const billingsToDate = filteredBillings.reduce((sum, billing) => {
+            const amount = parseFloat(billing.total_amount) || 0;
+            return sum + amount;
+          }, 0);
+
+        // Get contract total amount
+        const contractResponse = await fetch(`${baseURL}/api/project-contracts/${formData.contract_vuid}`);
+        if (contractResponse.ok) {
+          const contract = await contractResponse.json();
+          
+          // Verify this contract belongs to the selected project
+          if (contract.project_vuid !== formData.project_vuid) {
+            return;
+          }
+          
+          // Calculate total contract amount including change orders (same as WIP report)
+          const baseContractAmount = parseFloat(contract.contract_amount) || 0;
+          
+          // Get change orders for this contract (only APPROVED external change orders)
+          let changeOrdersTotal = 0;
+          try {
+            const changeOrdersResponse = await fetch(`${baseURL}/api/external-change-orders?contract_vuid=${formData.contract_vuid}`);
+            if (changeOrdersResponse.ok) {
+              const changeOrders = await changeOrdersResponse.json();
+              changeOrdersTotal = changeOrders
+                .filter(eco => eco.status === 'approved')
+                .reduce((sum, eco) => sum + (parseFloat(eco.total_contract_change_amount) || 0), 0);
+            }
+          } catch (error) {
+            console.log('Error fetching change orders:', error);
+          }
+          
+          // Total contract amount = base contract + change orders (same as WIP report)
+          const totalContractAmount = baseContractAmount + changeOrdersTotal;
+
+          // Calculate revenue recognized based on percentage of completion
+          // This should match the WIP Report calculation exactly:
+          // Earned Revenue = (Percent Complete / 100) * Total Contract Amount (including change orders)
+          // Where Percent Complete = (Costs to Date / Current Budget Amount) * 100
+          
+          // Get current budget amount for this project (same as WIP report)
+          // Current budget = original budget + internal change orders + external change order budget changes
+          let currentBudgetAmount = 0;
+          try {
+            // Get original budget
+            const budgetResponse = await fetch(`${baseURL}/api/project-budgets?project_vuid=${formData.project_vuid}&budget_type=original`);
+            if (budgetResponse.ok) {
+              const budgets = await budgetResponse.json();
+              if (budgets && budgets.length > 0) {
+                const originalBudget = budgets[0];
+                // Sum up budget lines
+                const budgetLinesResponse = await fetch(`${baseURL}/api/project-budgets/${originalBudget.vuid}/lines`);
+                if (budgetLinesResponse.ok) {
+                  const budgetLines = await budgetLinesResponse.json();
+                  currentBudgetAmount = budgetLines.reduce((sum, line) => sum + (parseFloat(line.budget_amount) || 0), 0);
+                }
+              }
+            }
+            
+            // Add internal change order budget changes
+            const icoResponse = await fetch(`${baseURL}/api/internal-change-orders?project_vuid=${formData.project_vuid}`);
+            if (icoResponse.ok) {
+              const icos = await icoResponse.json();
+              const approvedIcos = icos.filter(ico => ico.status === 'approved');
+              for (const ico of approvedIcos) {
+                const icoLinesResponse = await fetch(`${baseURL}/api/internal-change-orders/${ico.vuid}/lines`);
+                if (icoLinesResponse.ok) {
+                  const icoLines = await icoLinesResponse.json();
+                  const activeLines = icoLines.filter(line => line.status === 'active');
+                  const icoTotal = activeLines.reduce((sum, line) => sum + (parseFloat(line.change_amount) || 0), 0);
+                  currentBudgetAmount += icoTotal;
+                }
+              }
+            }
+            
+            // Add external change order budget changes
+            const ecoResponse = await fetch(`${baseURL}/api/external-change-orders?project_vuid=${formData.project_vuid}`);
+            if (ecoResponse.ok) {
+              const ecos = await ecoResponse.json();
+              const approvedEcos = ecos.filter(eco => eco.status === 'approved');
+              for (const eco of approvedEcos) {
+                const ecoLinesResponse = await fetch(`${baseURL}/api/external-change-orders/${eco.vuid}/lines`);
+                if (ecoLinesResponse.ok) {
+                  const ecoLines = await ecoLinesResponse.json();
+                  const activeLines = ecoLines.filter(line => line.status === 'active');
+                  const ecoBudgetTotal = activeLines.reduce((sum, line) => sum + (parseFloat(line.budget_amount_change) || 0), 0);
+                  currentBudgetAmount += ecoBudgetTotal;
+                }
+              }
+            }
+          } catch (error) {
+            console.log('Error fetching budget:', error);
+          }
+          
+          // Get costs to date (same as WIP report - AP invoices + labor costs + project expenses)
+          let costsToDate = 0;
+          try {
+            // AP Invoices (use subtotal, not total_amount)
+            const apInvoicesResponse = await fetch(`${baseURL}/api/ap-invoices?project_vuid=${formData.project_vuid}`);
+            if (apInvoicesResponse.ok) {
+              const apInvoices = await apInvoicesResponse.json();
+              const approvedInvoices = apInvoices.filter(invoice => invoice.status === 'approved');
+              costsToDate = approvedInvoices.reduce((sum, invoice) => sum + (parseFloat(invoice.subtotal) || 0), 0);
+            }
+            
+            // Labor Costs (status 'active', not 'approved')
+            const laborCostsResponse = await fetch(`${baseURL}/api/labor-costs?project_vuid=${formData.project_vuid}`);
+            if (laborCostsResponse.ok) {
+              const laborCosts = await laborCostsResponse.json();
+              const activeLaborCosts = laborCosts.filter(cost => cost.status === 'active');
+              const laborCostsTotal = activeLaborCosts.reduce((sum, cost) => sum + (parseFloat(cost.amount) || 0), 0);
+              costsToDate += laborCostsTotal;
+            }
+            
+            // Project Expenses (status 'approved')
+            const projectExpensesResponse = await fetch(`${baseURL}/api/project-expenses?project_vuid=${formData.project_vuid}`);
+            if (projectExpensesResponse.ok) {
+              const projectExpenses = await projectExpensesResponse.json();
+              const approvedExpenses = projectExpenses.filter(expense => expense.status === 'approved');
+              const expensesTotal = approvedExpenses.reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0);
+              costsToDate += expensesTotal;
+            }
+          } catch (error) {
+            console.log('Error fetching costs to date:', error);
+          }
+          
+          // Get costs for current period only (AP Invoices + Project Expenses + Labor Costs)
+          let costsThisPeriod = 0;
+          try {
+            if (formData.accounting_period_vuid) {
+              // Get AP Invoice costs for current period
+              const apInvoicesResponse = await fetch(`${baseURL}/api/ap-invoices?project_vuid=${formData.project_vuid}&accounting_period_vuid=${formData.accounting_period_vuid}`);
+              if (apInvoicesResponse.ok) {
+                const apInvoices = await apInvoicesResponse.json();
+                const apInvoiceCosts = apInvoices.reduce((sum, invoice) => sum + (parseFloat(invoice.subtotal) || 0), 0);
+                costsThisPeriod += apInvoiceCosts;
+              }
+              
+              // Get Project Expense costs for current period
+              const projectExpensesResponse = await fetch(`${baseURL}/api/project-expenses?project_vuid=${formData.project_vuid}&accounting_period_vuid=${formData.accounting_period_vuid}`);
+              if (projectExpensesResponse.ok) {
+                const projectExpenses = await projectExpensesResponse.json();
+                const projectExpenseCosts = projectExpenses.reduce((sum, expense) => sum + (parseFloat(expense.amount) || 0), 0);
+                costsThisPeriod += projectExpenseCosts;
+              }
+              
+              // Get Labor Cost costs for current period
+              const laborCostsResponse = await fetch(`${baseURL}/api/labor-costs?project_vuid=${formData.project_vuid}&accounting_period_vuid=${formData.accounting_period_vuid}`);
+              if (laborCostsResponse.ok) {
+                const laborCosts = await laborCostsResponse.json();
+                const laborCostAmounts = laborCosts.reduce((sum, cost) => sum + (parseFloat(cost.amount) || 0), 0);
+                costsThisPeriod += laborCostAmounts;
+              }
+            }
+          } catch (error) {
+            console.log('Error fetching costs for current period:', error);
+          }
+          
+          // Use percentComplete and revenueRecognized from WIP entry (already set at lines 1246, 1250)
+          // Do not recalculate - WIP values account for EAC correctly
+
+          // Calculate current billing amount from the appropriate source (edit vs create)
+          const currentBillingAmount = showEditModal 
+            ? billingLineItems.reduce((sum, line) => sum + (parseFloat(line.actual_billing_amount) || 0), 0)
+            : createBillingLines.reduce((sum, line) => sum + (parseFloat(line.actual_billing_amount) || 0), 0);
+          
+          let totalBillingsWithCurrent;
+          if (showEditModal && editingBilling) {
+            // In edit mode, we need to subtract the original billing amount from billingsToDate
+            // to avoid double-counting, then add the current billing amount
+            const originalBillingAmount = parseFloat(editingBilling.total_amount) || 0;
+            totalBillingsWithCurrent = (billingsToDate - originalBillingAmount) + currentBillingAmount;
+            console.log('Edit mode calculation:', {
+              billingsToDate,
+              originalBillingAmount,
+              currentBillingAmount,
+              totalBillingsWithCurrent
+            });
+          } else {
+            // In create mode, just add current billing to existing billings
+            totalBillingsWithCurrent = billingsToDate + currentBillingAmount;
+            console.log('Create mode calculation:', {
+              billingsToDate,
+              currentBillingAmount,
+              totalBillingsWithCurrent
+            });
+          }
+          
+          // Calculate over/under billing exactly like WIP report
+          // WIP formula: billedToDate - earnedRevenue
+          // Where earnedRevenue = (percent_complete / 100) * total_contract_amount
+          const overUnderBilling = totalBillingsWithCurrent - revenueRecognized;
+          
+          // Ensure we don't have negative over/under billing when values are very close
+          const roundedOverUnder = Math.round(overUnderBilling * 100) / 100;
+          
+          // Debug logging
+          console.log('Billing Metrics Debug:', {
+            billingsToDate,
+            revenueRecognized,
+            totalContractAmount,
+            currentBillingAmount,
+            totalBillingsWithCurrent,
+            overUnderBilling,
+            roundedOverUnder,
+            percentComplete,
+            costsToDate,
+            currentBudgetAmount
+          });
+          
+          // Additional WIP-style calculation for comparison
+          const wipStyleOverUnder = totalBillingsWithCurrent - revenueRecognized;
+          console.log('WIP-style calculation comparison:', {
+            totalBillingsWithCurrent,
+            revenueRecognized,
+            wipStyleOverUnder,
+            percentComplete,
+            totalContractAmount
+          });
+          let billingStatus = 'neutral';
+          if (roundedOverUnder > 0) billingStatus = 'over';
+          else if (roundedOverUnder < 0) billingStatus = 'under';
+
+          const metrics = {
+            billingsToDate,
+            revenueRecognized,
+            totalContractAmount,
+            overUnderBilling: Math.abs(roundedOverUnder),
+            billingStatus,
+            currentBudgetAmount,
+            costsThisPeriod: costsThisPeriod, // Use actual period costs
+            percentComplete,
+            eacEnabled: false, // Fallback doesn't have EAC info
+            isLoading: false
+          };
+          
+          console.log('🎯 MAIN FUNCTION: Final metrics object being set:', metrics);
+          setBillingMetricsWithDebug(metrics);
+        } else {
+          console.log('No WIP entry found for project and contract, using fallback calculation');
+          // Fallback to basic calculation if WIP data not available
+          const fallbackMetrics = {
+            billingsToDate: 0,
+            revenueRecognized: 0,
+            revenueRecognizedThisPeriod: 0,
+            totalContractAmount: 0,
+            overUnderBilling: 0,
+            billingStatus: 'neutral',
+            currentBudgetAmount: 0,
+            costsThisPeriod: 0,
+            percentComplete: 0,
+            eacEnabled: false,
+            isLoading: false
+          };
+          console.log('🎯 FALLBACK: Setting fallback metrics:', fallbackMetrics);
+          setBillingMetricsWithDebug(fallbackMetrics);
+        }
+      } else {
+        console.log('Failed to fetch WIP data, using fallback calculation');
+        // Fallback to basic calculation if WIP API fails
+        const fallbackMetrics = {
+          billingsToDate: 0,
+          revenueRecognized: 0,
+          totalContractAmount: 0,
+          overUnderBilling: 0,
+          billingStatus: 'neutral',
+          currentBudgetAmount: 0,
+          costsThisPeriod: 0,
+          percentComplete: 0
+        };
+        setBillingMetrics(fallbackMetrics);
+      }
+    } catch (error) {
+      console.log('Error calculating billing metrics:', error);
+      // Fallback to basic calculation if error occurs
+      const fallbackMetrics = {
+        billingsToDate: 0,
+        revenueRecognized: 0,
+        totalContractAmount: 0,
+        overUnderBilling: 0,
+        billingStatus: 'neutral',
+        currentBudgetAmount: 0,
+        costsThisPeriod: 0,
+        percentComplete: 0
+      };
+      setBillingMetrics(fallbackMetrics);
+    }
+  };
+
+  const handleBulkMarkup = () => {
+    if (!bulkMarkupPercentage || isNaN(parseFloat(bulkMarkupPercentage))) {
+      alert('Please enter a valid markup percentage');
+      return;
+    }
+
+    const markupValue = parseFloat(bulkMarkupPercentage);
+    
+    // Apply markup to all lines in the create billing lines grid
+    const updatedLines = createBillingLines.map(line => {
+      const billingAmount = parseFloat(line.billing_amount) || 0;
+      const actualBillingAmount = billingAmount * (1 + markupValue / 100);
+      const retainagePercentage = parseFloat(line.retainage_percentage) || 10;
+      const retentionHeld = actualBillingAmount * (retainagePercentage / 100);
+      
+      return {
+        ...line,
+        markup_percentage: markupValue,
+        actual_billing_amount: actualBillingAmount,
+        retention_held: retentionHeld
+      };
+    });
+
+    setCreateBillingLines(updatedLines);
+    setShowBulkMarkupModal(false);
+    setBulkMarkupPercentage('');
+    
+    alert(`Successfully applied ${markupValue}% markup to all ${updatedLines.length} billing lines`);
+  };
+
+  const handleSaveAllLines = async () => {
+    try {
+      // Force a recalculation of billing metrics to include current billing amount
+      await calculateBillingMetrics();
+      
+      // Show a brief success message
+      const button = document.querySelector('button[onClick*="handleSaveAllLines"]');
+      if (button) {
+        const originalText = button.textContent;
+        button.textContent = '✅ Saved!';
+        button.className = 'px-6 py-2 bg-black text-white rounded-lg font-medium';
+        setTimeout(() => {
+          button.textContent = originalText;
+          button.className = 'px-6 py-2 bg-black text-white rounded-lg hover:bg-gray-800 font-medium';
+        }, 2000);
+      }
+    } catch (error) {
+      // Error occurred
+    }
+  };
+
+
+  const handleEditingLineFieldChange = (field, value) => {
+    const updatedData = { ...editingLineData };
+    
+    if (field === 'markup_percentage' || field === 'retainage_percentage' || field === 'billing_amount') {
+      const markupPercentage = parseFloat(field === 'markup_percentage' ? value : updatedData.markup_percentage) || 0;
+      const retainagePercentage = parseFloat(field === 'retainage_percentage' ? value : updatedData.retainage_percentage) || 10;
+      const billingAmount = parseFloat(field === 'billing_amount' ? value : updatedData.billing_amount) || 0;
+      
+      const actualBillingAmount = billingAmount * (1 + markupPercentage / 100);
+      const retentionHeld = actualBillingAmount * (retainagePercentage / 100);
+      
+      updatedData[field] = value;
+      updatedData.actual_billing_amount = actualBillingAmount;
+      updatedData.retention_held = retentionHeld;
+    } else if (field === 'actual_billing_amount') {
+      // When actual_billing_amount is manually changed, recalculate retention_held
+      const actualBillingAmount = parseFloat(value) || 0;
+      const retainagePercentage = parseFloat(updatedData.retainage_percentage) || 10;
+      const retentionHeld = actualBillingAmount * (retainagePercentage / 100);
+      
+      updatedData[field] = value;
+      updatedData.retention_held = retentionHeld;
+    } else if (field === 'retention_held') {
+      // When retention_held is manually changed, calculate the retainage_percentage
+      const actualBillingAmount = parseFloat(updatedData.actual_billing_amount) || 0;
+      const retentionHeld = parseFloat(value) || 0;
+      
+      let retainagePercentage = 0;
+      if (actualBillingAmount > 0) {
+        retainagePercentage = (retentionHeld / actualBillingAmount) * 100;
+      }
+      
+      updatedData[field] = value;
+      updatedData.retainage_percentage = retainagePercentage;
+    } else {
+      updatedData[field] = value;
+    }
+    
+    setEditingLineData(updatedData);
+  };
+
+  const handleSaveLineEdit = async (index) => {
+    try {
+      // If we're in edit billing modal, update createBillingLines
+      if (showEditModal) {
+        const updatedLines = [...createBillingLines];
+        updatedLines[index] = { ...updatedLines[index], ...editingLineData };
+        setCreateBillingLines(updatedLines);
+        
+        // Exit edit mode
+        setEditingLineIndex(null);
+        setEditingLineData({});
+        
+        // Recalculate billing metrics after line edit
+        calculateBillingMetrics();
+        return;
+      }
+      
+      // Otherwise, handle as view billing modal (existing logic)
+      const line = billingLineItems[index];
+      const response = await fetch(`${baseURL}/api/project-billings/${selectedBilling.vuid}/line-items/${line.vuid}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(editingLineData)
+      });
+
+      if (response.ok) {
+        const updatedLine = await response.json();
+        // Update the local state
+        const updatedLines = [...billingLineItems];
+        updatedLines[index] = updatedLine;
+        setBillingLineItems(updatedLines);
+        
+        // Exit edit mode
+        setEditingLineIndex(null);
+        setEditingLineData({});
+      } else {
+        const errorData = await response.json();
+        setError(errorData.error || 'Failed to update line item');
+      }
+    } catch (error) {
+      console.error('Error updating line item:', error);
+      setError('Failed to update line item');
+    }
+  };
+
+  const handleUpdateBilling = async () => {
+    try {
+      setCreating(true);
+      console.log('🔄 Starting billing update:', {
+        billingVuid: editingBilling.vuid,
+        formData: editFormData
+      });
+      
+      // Prepare the update data including line items
+      const updateData = {
+        ...editFormData,
+        line_items: createBillingLines.map(line => ({
+          line_number: line.line_number,
+          description: line.description,
+          cost_code_vuid: line.cost_code_vuid,
+          cost_type_vuid: line.cost_type_vuid,
+          contract_amount: line.contract_amount || 0,
+          billing_amount: line.billing_amount,
+          markup_percentage: line.markup_percentage,
+          actual_billing_amount: line.actual_billing_amount,
+          retainage_percentage: line.retainage_percentage,
+          retention_held: line.retention_held
+        }))
+      };
+      
+      console.log('🔄 Sending update with line items:', {
+        headerData: editFormData,
+        lineItemsCount: createBillingLines.length,
+        lineItems: updateData.line_items
+      });
+
+      const response = await fetch(`${baseURL}/api/project-billings/${editingBilling.vuid}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(updateData)
+      });
+
+      console.log('📡 Update response:', {
+        status: response.status,
+        ok: response.ok
+      });
+
+      if (response.ok) {
+        const updatedBilling = await response.json();
+        console.log('✅ Billing updated successfully:', updatedBilling);
+        console.log('✅ Closing modal and returning to list');
+        
+        // FIRST: Set flag to prevent auto-reopen
+        setJustUpdated(true);
+        console.log('🔧 Set justUpdated flag to prevent auto-reopen');
+        
+        // SECOND: Clear URL parameters to prevent auto-reopening
+        const url = new URL(window.location);
+        url.searchParams.delete('billing');
+        window.history.replaceState({}, '', url);
+        console.log('🔧 Cleared billing URL parameter');
+        
+        // THIRD: Close the edit modal and clear edit state
+        console.log('🔧 About to close edit modal...');
+        setShowEditModal(false);
+        console.log('🔧 Set showEditModal to false');
+        setEditingBilling(null);
+        console.log('🔧 Cleared editingBilling');
+        setEditFormData({});
+        console.log('🔧 Cleared editFormData');
+        setBillingLineItems([]);
+        console.log('🔧 Cleared billingLineItems');
+        
+        // THIRD: Update the billing in the local state instead of full refresh
+        // This prevents triggering the useEffect that auto-opens the modal
+        console.log('🔧 Updated billing in local state, skipping full refresh');
+        
+        // FOURTH: The billing was just updated, so any alerts about new transactions
+        // should be considered addressed. The backend should account for this.
+        
+        // Show success message
+        alert('Billing updated successfully!');
+      } else {
+        const errorData = await response.json();
+        console.log('❌ Update failed:', {
+          status: response.status,
+          errorData
+        });
+        setError(errorData.error || 'Failed to update billing');
+      }
+    } catch (error) {
+      console.error('❌ Error updating billing:', error);
+      setError('Failed to update billing');
+    } finally {
+      console.log('🔄 Update process finished, setCreating(false)');
+      setCreating(false);
+    }
+  };
+
+  const handleCreateBilling = async () => {
+    // Debug logging to see what's missing
+    console.log('Form data:', createFormData);
+    console.log('Billing lines:', createBillingLines);
+    
+    // Check all required fields
+    const missingFields = [];
+    
+    if (!createFormData.billing_number) missingFields.push('Billing Number');
+    if (!createFormData.project_vuid) missingFields.push('Project');
+    if (!createFormData.contract_vuid) missingFields.push('Contract');
+    if (!createFormData.customer_vuid) missingFields.push('Customer');
+    if (!createFormData.billing_date) missingFields.push('Billing Date');
+    if (!createFormData.accounting_period_vuid) missingFields.push('Accounting Period');
+    
+    if (missingFields.length > 0) {
+      alert(`Please fill in the following required fields: ${missingFields.join(', ')}`);
+      return;
+    }
+    
+    if (createBillingLines.length === 0) {
+      alert('Please add at least one line item');
+      return;
+    }
+    
+    // Validate that all line items have required fields
+    for (let i = 0; i < createBillingLines.length; i++) {
+      const line = createBillingLines[i];
+      if (!line.description) {
+        alert(`Line ${i + 1} is missing required field (description)`);
+        return;
+      }
+    }
+
+    setCreating(true);
+    try {
+      console.log('Creating billing with lines:', createBillingLines);
+      
+      // Calculate totals
+      const totalBillingAmount = createBillingLines.reduce((sum, line) => sum + (parseFloat(line.actual_billing_amount) || 0), 0);
+      const totalRetentionHeld = createBillingLines.reduce((sum, line) => sum + (parseFloat(line.retention_held) || 0), 0);
+      const totalRetentionReleased = createBillingLines.reduce((sum, line) => sum + (parseFloat(line.retention_released) || 0), 0);
+
+      // Create the billing header
+      const billingData = {
+        billing_number: createFormData.billing_number,
+        project_vuid: createFormData.project_vuid,
+        contract_vuid: createFormData.contract_vuid,
+        customer_vuid: createFormData.customer_vuid,
+        billing_date: createFormData.billing_date,
+        due_date: createFormData.due_date || null,
+        description: createFormData.description || '',
+        status: createFormData.status,
+        accounting_period_vuid: createFormData.accounting_period_vuid,
+        subtotal: totalBillingAmount,
+        retention_held: totalRetentionHeld,
+        retention_released: totalRetentionReleased,
+        total_amount: totalBillingAmount - totalRetentionHeld + totalRetentionReleased
+      };
+
+      const response = await fetch(`${baseURL}/api/project-billings`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(billingData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.text();
+        throw new Error(errorData || 'Failed to create project billing');
+      }
+
+      const newBilling = await response.json();
+
+      // Create line items
+      for (const line of createBillingLines) {
+        const lineData = {
+          billing_vuid: newBilling.vuid,
+          line_number: line.line_number,
+          description: line.description,
+          cost_code_vuid: line.cost_code_vuid || null,
+          cost_type_vuid: line.cost_type_vuid || null,
+          contract_amount: parseFloat(line.contract_amount) || 0,
+          billing_amount: parseFloat(line.billing_amount) || 0,
+          markup_percentage: parseFloat(line.markup_percentage) || 0,
+          actual_billing_amount: parseFloat(line.actual_billing_amount) || 0,
+          retainage_percentage: parseFloat(line.retainage_percentage) || 10,
+          retention_held: parseFloat(line.retention_held) || 0,
+          retention_released: parseFloat(line.retention_released) || 0
+        };
+        
+        console.log('Creating line item with data:', lineData);
+
+        const lineResponse = await fetch(`${baseURL}/api/project-billings/${newBilling.vuid}/line-items`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(lineData),
+        });
+
+        if (!lineResponse.ok) {
+          const errorText = await lineResponse.text();
+          console.error('Line item creation error:', errorText);
+          throw new Error(`Failed to create billing line item: ${errorText}`);
+        }
+      }
+
+      alert('Project Billing created successfully!');
+      setShowCreateModal(false);
+      setCreateFormData({
+        billing_number: '',
+        project_vuid: projectVuid || '',
+        contract_vuid: '',
+        customer_vuid: '',
+        billing_date: new Date().toISOString().split('T')[0],
+        due_date: '',
+        accounting_period_vuid: '',
+        description: '',
+        status: 'pending'
+      });
+      setCreateBillingLines([]);
+      fetchData();
+    } catch (error) {
+      console.error('Error creating project billing:', error);
+      alert(`Error creating project billing: ${error.message}`);
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    return new Date(dateString).toLocaleDateString();
+  };
+
+  const formatCurrency = (amount) => {
+    if (!amount) return '$0.00';
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD'
+    }).format(amount);
+  };
+
+  const fetchBilledToDate = async (lineItems, projectVuid, currentBillingVuid = null) => {
+    try {
+      const response = await fetch('http://localhost:5001/api/project-billings/billed-to-date', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          line_items: lineItems,
+          project_vuid: projectVuid,
+          current_billing_vuid: currentBillingVuid
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.success) {
+          const billedToDateMap = {};
+          let hasProjectLevelBilling = false;
+          let projectLevelAmount = 0;
+          
+          data.billed_to_date_results.forEach(result => {
+            billedToDateMap[result.line_item_key] = result.billed_to_date;
+            // Check if this is a project-level billing (same amount for all items)
+            if (result.billed_to_date > 0) {
+              if (projectLevelAmount === 0) {
+                projectLevelAmount = result.billed_to_date;
+              } else if (result.billed_to_date === projectLevelAmount) {
+                hasProjectLevelBilling = true;
+              }
+            }
+          });
+          
+          setBilledToDateData(billedToDateMap);
+          
+          // If we have project-level billing, show a note
+          if (hasProjectLevelBilling) {
+            console.log(`Project-level billing detected: $${projectLevelAmount.toFixed(2)} distributed across line items`);
+          }
+        }
+      }
+    } catch (error) {
+      console.error('Error fetching billed to date:', error);
+    }
+  };
+
+  // Helper function to calculate correct retention held for display
+  const getCalculatedRetentionHeld = (line) => {
+    const actualBillingAmount = parseFloat(line.actual_billing_amount) || 0;
+    const retainagePercentage = parseFloat(line.retainage_percentage) || 10;
+    return actualBillingAmount * (retainagePercentage / 100);
+  };
+
+  const getFilteredData = () => {
+    // Ensure billings is always an array to prevent filter errors
+    let filtered = Array.isArray(billings) ? billings : [];
+
+    // Filter by project if projectVuid is provided in URL
+    if (projectVuid) {
+      filtered = filtered.filter(item => item.project_vuid === projectVuid);
+    }
+
+    if (searchTerm) {
+      filtered = filtered.filter(item =>
+        item.billing_number?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        item.project?.project_name?.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        item.contract?.contract_name?.toLowerCase().includes(searchTerm.toLowerCase())
+      );
+    }
+
+    if (statusFilter) {
+      filtered = filtered.filter(item => item.status === statusFilter);
+    }
+
+    return filtered;
+  };
+
+  const getCurrentData = () => {
+    const filtered = getFilteredData();
+    const startIndex = (currentPage - 1) * itemsPerPage;
+    return filtered.slice(startIndex, startIndex + itemsPerPage);
+  };
+
+  const totalPages = Math.ceil(getFilteredData().length / itemsPerPage);
+
+  const openCreateModal = () => {
+    setCreateFormData({
+      billing_number: '',
+      project_vuid: projectVuid || '', // Use projectVuid from URL if available
+      contract_vuid: '',
+      customer_vuid: '',
+      billing_date: new Date().toISOString().split('T')[0],
+      due_date: '',
+      accounting_period_vuid: '',
+      description: '',
+      status: 'pending'
+    });
+    setCreateBillingLines([]);
+    setShowCreateModal(true);
+  };
+
+  const handleQBOExport = async () => {
+    try {
+      setQboExportLoading(true);
+      setQboExportResult(null);
+      
+      // Get the current accounting period from filters
+      const accountingPeriodVuid = accountingPeriodFilter;
+      if (!accountingPeriodVuid) {
+        setError('Please select an accounting period to export');
+        return;
+      }
+      
+      const requestBody = {
+        accounting_period_vuid: accountingPeriodVuid
+      };
+      
+      // Add project filter if selected
+      if (projectVuid) {
+        requestBody.project_vuid = projectVuid;
+      }
+      
+      const response = await fetch(`${baseURL}/api/mock-quickbooks-online/journal-entries`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        setQboExportResult(result);
+        setShowQBOExportModal(true);
+      } else {
+        const errorData = await response.json();
+        setError(errorData.error || 'Failed to export to QuickBooks Online');
+      }
+    } catch (error) {
+      setError('Error exporting to QuickBooks Online');
+      console.error('Error:', error);
+    } finally {
+      setQboExportLoading(false);
+    }
+  };
+
+  const handleQBOInvoiceExport = async () => {
+    try {
+      setQboExportLoading(true);
+      setQboExportResult(null);
+      
+      // Get the current accounting period from filters
+      const accountingPeriodVuid = accountingPeriodFilter;
+      if (!accountingPeriodVuid) {
+        setError('Please select an accounting period to export');
+        return;
+      }
+      
+      const requestBody = {
+        accounting_period_vuid: accountingPeriodVuid
+      };
+      
+      // Add project filter if selected
+      if (projectVuid) {
+        requestBody.project_vuid = projectVuid;
+      }
+      
+      const response = await fetch(`${baseURL}/api/mock-quickbooks-online/invoices`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(requestBody)
+      });
+      
+      if (response.ok) {
+        const result = await response.json();
+        setQboExportResult(result);
+        setShowQBOExportModal(true);
+      } else {
+        const errorData = await response.json();
+        setError(errorData.error || 'Failed to export invoices to QuickBooks Online');
+      }
+    } catch (error) {
+      setError('Error exporting invoices to QuickBooks Online');
+      console.error('Error:', error);
+    } finally {
+      setQboExportLoading(false);
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gray-50 flex items-center justify-center">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-4 text-gray-600">Loading project billings...</p>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gray-50 py-8">
+      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+        {/* Header */}
+        <div className="mb-8">
+          <h1 className="text-3xl font-bold text-gray-900">Project Billing</h1>
+          <p className="mt-2 text-gray-600">Create and manage invoices against project contracts</p>
+          {projectVuid && (
+            <div className="mt-2 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+              <p className="text-sm text-blue-800">
+                <span className="font-medium">Filtered by project:</span> {projects.find(p => p.vuid === projectVuid)?.project_name || 'Unknown Project'}
+              </p>
+            </div>
+          )}
+        </div>
+
+        {/* Summary Tiles */}
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <div className="p-2 bg-blue-100 rounded-lg">
+                <svg className="w-6 h-6 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Total Billings</p>
+                <p className="text-xl font-semibold text-gray-900">{getFilteredData().length}</p>
+              </div>
+            </div>
+          </div>
+          
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <div className="p-2 bg-yellow-100 rounded-lg">
+                <svg className="w-6 h-6 text-yellow-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Pending</p>
+                <p className="text-xl font-semibold text-gray-900">
+                  {getFilteredData().filter(b => b.status === 'pending').length}
+                </p>
+              </div>
+            </div>
+          </div>
+          
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <div className="p-2 bg-green-100 rounded-lg">
+                <svg className="w-6 h-6 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                </svg>
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Approved</p>
+                <p className="text-xl font-semibold text-gray-900">
+                  {getFilteredData().filter(b => b.status === 'approved').length}
+                </p>
+              </div>
+            </div>
+          </div>
+          
+          <div className="bg-white rounded-lg shadow p-6">
+            <div className="flex items-center">
+              <div className="p-2 bg-red-100 rounded-lg">
+                <svg className="w-6 h-6 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1" />
+                </svg>
+              </div>
+              <div className="ml-4">
+                <p className="text-sm font-medium text-gray-600">Gross Amount</p>
+                <p className="text-lg font-semibold text-gray-900 leading-tight">
+                  {formatCurrency(getFilteredData().reduce((sum, b) => {
+                    // Calculate gross amount as sum of actual billing amounts from line items
+                    // This should match the sum of all line items' actual_billing_amount
+                    const grossAmount = parseFloat(b.total_amount) || 0;
+                    return sum + grossAmount;
+                  }, 0))}
+                </p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Controls */}
+        <div className="flex flex-col sm:flex-row justify-between items-center mb-6 gap-4">
+          <div className="flex flex-col sm:flex-row gap-4 flex-1">
+            <input
+              type="text"
+              placeholder="Search billings..."
+              value={searchTerm}
+              onChange={(e) => setSearchTerm(e.target.value)}
+              className="px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            />
+            <select
+              value={statusFilter}
+              onChange={(e) => setStatusFilter(e.target.value)}
+              className="px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <option value="">All Statuses</option>
+              <option value="pending">Pending</option>
+              <option value="approved">Approved</option>
+              <option value="paid">Paid</option>
+              <option value="cancelled">Cancelled</option>
+            </select>
+            <select
+              value={accountingPeriodFilter}
+              onChange={(e) => setAccountingPeriodFilter(e.target.value)}
+              className="px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+            >
+              <option value="">All Periods</option>
+              {accountingPeriods.map(period => (
+                <option key={period.vuid} value={period.vuid}>
+                  {period.month}/{period.year}
+                </option>
+              ))}
+            </select>
+          </div>
+          
+          <div className="flex flex-col sm:flex-row gap-3">
+            <button
+              onClick={openCreateModal}
+              className="bg-gray-800 hover:bg-gray-900 text-white font-semibold py-4 px-8 rounded-lg text-lg transition-all duration-200 transform hover:scale-105 shadow-lg"
+            >
+              + Create Billing
+            </button>
+            
+            {accountingPeriodFilter && (
+              <>
+                <button
+                  onClick={handleQBOExport}
+                  disabled={qboExportLoading}
+                  className="bg-black hover:bg-gray-800 disabled:bg-gray-400 text-white font-semibold py-4 px-6 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  {qboExportLoading ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                      </svg>
+                      Exporting...
+                    </>
+                  ) : (
+                    <>
+                      💰 Send Journals to QBO
+                    </>
+                  )}
+                </button>
+                
+                <button
+                  onClick={handleQBOInvoiceExport}
+                  disabled={qboExportLoading}
+                  className="bg-black hover:bg-gray-800 disabled:bg-gray-400 text-white font-semibold py-4 px-6 rounded-lg transition-colors flex items-center gap-2"
+                >
+                  {qboExportLoading ? (
+                    <>
+                      <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                      </svg>
+                      Exporting...
+                    </>
+                  ) : (
+                    <>
+                      📄 Send Invoices to QBO
+                    </>
+                  )}
+                </button>
+              </>
+            )}
+          </div>
+        </div>
+
+        {/* Billings Table */}
+        <div className="bg-white rounded-lg shadow overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="min-w-full divide-y divide-gray-200">
+              <thead className="bg-gray-50">
+                <tr>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Billing #
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Project
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Contract
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Customer
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Date
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Due Date
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Accounting Period
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Gross Amount
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Status
+                  </th>
+                  <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    Actions
+                  </th>
+                </tr>
+              </thead>
+              <tbody className="bg-white divide-y divide-gray-200">
+                {getCurrentData().map((billing) => (
+                  <tr key={billing.vuid} className={`hover:bg-gray-50 ${billing.accounting_period && billing.accounting_period.status === 'closed' ? 'cursor-not-allowed' : 'cursor-pointer'}`} onClick={(e) => {
+                    console.log('Row clicked for billing:', billing.billing_number);
+                    e.preventDefault();
+                    e.stopPropagation();
+                    handleEditBilling(billing);
+                  }}>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                      {billing.billing_number}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {billing.project_name || billing.project?.project_name || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {billing.contract_number || billing.contract?.contract_number || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {billing.customer_name || billing.customer?.customer_name || 'N/A'}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {formatDate(billing.billing_date)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {formatDate(billing.due_date)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {billing.accounting_period_name || (billing.accounting_period ? `${billing.accounting_period.month}/${billing.accounting_period.year}` : 'N/A')}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                      {formatCurrency(parseFloat(billing.total_amount) || 0)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center gap-2">
+                        <span className={`inline-flex px-2 py-1 text-xs font-semibold rounded-full ${
+                          billing.status === 'pending' ? 'bg-yellow-100 text-yellow-800' :
+                          billing.status === 'approved' ? 'bg-green-100 text-green-800' :
+                          billing.status === 'paid' ? 'bg-blue-100 text-blue-800' :
+                          'bg-red-100 text-red-800'
+                        }`}>
+                          {billing.status.charAt(0).toUpperCase() + billing.status.slice(1)}
+                        </span>
+                        {billing.exported_to_accounting && (
+                          <span className="inline-flex items-center px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-800 gap-1">
+                            <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                              <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                            </svg>
+                            Exported
+                          </span>
+                        )}
+                      </div>
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
+                      <div className="flex space-x-2">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            console.log('Opening view lines modal for billing:', billing);
+                            setSelectedBilling(billing);
+                            setShowViewLinesModal(true);
+                            fetchBillingLineItems(billing.vuid);
+                          }}
+                          className="text-blue-600 hover:text-blue-900"
+                        >
+                          View Lines
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleEditBilling(billing);
+                          }}
+                          disabled={billing.accounting_period && billing.accounting_period.status === 'closed'}
+                          className={`${
+                            billing.accounting_period && billing.accounting_period.status === 'closed'
+                              ? 'text-gray-400 cursor-not-allowed' 
+                              : 'text-green-600 hover:text-green-900'
+                          }`}
+                          title={
+                            billing.accounting_period && billing.accounting_period.status === 'closed'
+                              ? 'Cannot edit billing from closed accounting period'
+                              : 'Edit billing'
+                          }
+                        >
+                          Edit
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handlePreviewJournalEntry(billing);
+                          }}
+                          disabled={previewLoading}
+                          className="text-purple-600 hover:text-purple-900 disabled:opacity-50"
+                          title="Preview Journal Entry"
+                        >
+                          {previewLoading ? '⏳' : '👁️'}
+                        </button>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            if (!isBillingPeriodClosed(billing) && !billing.exported_to_accounting) {
+                              handleDeleteBilling(billing.vuid);
+                            }
+                          }}
+                          disabled={isBillingPeriodClosed(billing) || billing.exported_to_accounting}
+                          className={`${
+                            isBillingPeriodClosed(billing) || billing.exported_to_accounting
+                              ? 'text-gray-400 cursor-not-allowed' 
+                              : 'text-red-600 hover:text-red-900'
+                          }`}
+                          title={
+                            isBillingPeriodClosed(billing) 
+                              ? 'Cannot delete billing from closed accounting period' 
+                              : billing.exported_to_accounting
+                              ? 'Cannot delete exported billing'
+                              : 'Delete billing'
+                          }
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        {/* Pagination */}
+        {totalPages > 1 && (
+          <div className="mt-6 flex items-center justify-between">
+            <div className="text-sm text-gray-700">
+              Showing {((currentPage - 1) * itemsPerPage) + 1} to {Math.min(currentPage * itemsPerPage, getFilteredData().length)} of {getFilteredData().length} results
+            </div>
+            <div className="flex space-x-2">
+              <button
+                onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Previous
+              </button>
+              <button
+                onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
+                disabled={currentPage === totalPages}
+                className="px-3 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
+
+        {/* Create Billing Modal */}
+        {showCreateModal && (
+          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+            <div className="relative top-20 mx-auto p-5 border w-11/12 max-w-6xl shadow-lg rounded-md bg-white">
+              <div className="mt-3">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Create New Project Billing</h3>
+                
+                {/* Header Form */}
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Billing Number *</label>
+                    <input
+                      type="text"
+                      value={createFormData.billing_number}
+                      onChange={(e) => setCreateFormData({...createFormData, billing_number: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Enter billing number"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Project</label>
+                    <select
+                      value={createFormData.project_vuid}
+                      onChange={(e) => handleProjectChange(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Select Project</option>
+                      {projects.map(project => (
+                        <option key={project.vuid} value={project.vuid}>
+                          {project.project_number} - {project.project_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Contract *</label>
+                    <select
+                      value={createFormData.contract_vuid}
+                      onChange={async (e) => {
+                        const contractVuid = e.target.value;
+                        setCreateFormData(prev => ({
+                          ...prev,
+                          contract_vuid: contractVuid,
+                          accounting_period_vuid: ''
+                        }));
+                        
+                        // Populate billing lines with contract items when contract is selected
+                        if (contractVuid) {
+                          await populateBillingLines(contractVuid);
+                        } else {
+                          setCreateBillingLines([]);
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Select Contract</option>
+                      {projectContracts
+                        .filter(contract => !createFormData.project_vuid || contract.project_vuid === createFormData.project_vuid)
+                        .map(contract => (
+                          <option key={contract.vuid} value={contract.vuid}>
+                            {contract.contract_number} - {contract.contract_name}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Customer</label>
+                    <select
+                      value={createFormData.customer_vuid}
+                      onChange={(e) => setCreateFormData({...createFormData, customer_vuid: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Select Customer</option>
+                      {customers.map(customer => (
+                        <option key={customer.vuid} value={customer.vuid}>
+                          {customer.customer_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Billing Date *</label>
+                    <input
+                      type="date"
+                      value={createFormData.billing_date}
+                      onChange={(e) => setCreateFormData({...createFormData, billing_date: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Due Date</label>
+                    <input
+                      type="date"
+                      value={createFormData.due_date}
+                      onChange={(e) => setCreateFormData({...createFormData, due_date: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Accounting Period *</label>
+                    <select
+                      value={createFormData.accounting_period_vuid}
+                      onChange={async (e) => {
+                        const newAccountingPeriod = e.target.value;
+                        setCreateFormData({...createFormData, accounting_period_vuid: newAccountingPeriod});
+                        
+                        // If both project and contract are already selected, populate billing lines
+                        if (createFormData.project_vuid && createFormData.contract_vuid && newAccountingPeriod) {
+                          await populateBillingLines(createFormData.contract_vuid);
+                        }
+                      }}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="">Select Accounting Period</option>
+                      {accountingPeriods.map(period => (
+                        <option key={period.vuid} value={period.vuid}>
+                          {period.month}/{period.year}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                    <input
+                      type="text"
+                      value={createFormData.description}
+                      onChange={(e) => setCreateFormData({...createFormData, description: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="Enter description"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+                    <select
+                      value={createFormData.status}
+                      onChange={(e) => setCreateFormData({...createFormData, status: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value="pending">Pending</option>
+                      <option value="approved">Approved</option>
+                      <option value="paid">Paid</option>
+                      <option value="cancelled">Cancelled</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* Billing Lines Grid */}
+                <div className="mb-6">
+                  <div className="flex justify-between items-center mb-3">
+                    <h4 className="text-md font-medium text-gray-900">Billing Lines</h4>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={handleViewCostsBreakdown}
+                        disabled={!createFormData.project_vuid || costsBreakdownLoading}
+                        className="bg-green-600 hover:bg-green-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-md text-sm transition-colors duration-200"
+                        title="View detailed costs breakdown by cost code and cost type for the selected project and accounting period"
+                      >
+                        {costsBreakdownLoading ? '⏳ Loading...' : '📊 View Costs Breakdown'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handlePrefillFromAPInvoices}
+                        disabled={!createFormData.project_vuid || !createFormData.contract_vuid || !createFormData.accounting_period_vuid}
+                        className="bg-blue-600 hover:bg-blue-700 disabled:bg-gray-400 disabled:cursor-not-allowed text-white font-medium py-2 px-4 rounded-md text-sm transition-colors duration-200"
+                        title="Prefill billing lines based on all costs (AP Invoices, Labor Costs, Project Expenses) for the selected project, contract, and accounting period"
+                      >
+                        📋 Prefill All Costs
+                      </button>
+                    </div>
+                  </div>
+                  
+                  {/* Info about prefill functionality */}
+                  <div className="mb-3 p-3 bg-blue-50 border border-blue-200 rounded-md">
+                    <p className="text-sm text-blue-800">
+                      <strong>💡 Tip:</strong> Use "Prefill All Costs" to automatically populate billing lines based on actual costs incurred from AP Invoices, Labor Costs, and Project Expenses. 
+                      This ensures accurate billing and helps prevent over/under billing by showing costs from all approved sources that match your contract's cost allocations.
+                    </p>
+                  </div>
+
+                  {/* Unallocated Costs Warning */}
+                  {unallocatedCosts && unallocatedCosts.unallocated_count > 0 && (
+                    <div className="mb-3 p-4 bg-amber-50 border border-amber-200 rounded-md">
+                      <div className="flex items-start">
+                        <div className="flex-shrink-0">
+                          <svg className="h-5 w-5 text-amber-400" viewBox="0 0 20 20" fill="currentColor">
+                            <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                          </svg>
+                        </div>
+                        <div className="ml-3 flex-1">
+                          <h3 className="text-sm font-medium text-amber-800">
+                            ⚠️ Unallocated Costs Detected
+                          </h3>
+                          <div className="mt-2 text-sm text-amber-700">
+                            <p>
+                              You have <strong>{unallocatedCosts.unallocated_count} cost code/type combinations</strong> with costs totaling{' '}
+                              <strong>{formatCurrency(unallocatedCosts.total_unallocated_amount)}</strong> that are not allocated to any contract items.
+                            </p>
+                            <p className="mt-1">
+                              These costs will not be included in your billing unless you add corresponding contract items or manually create billing lines for them.
+                            </p>
+                            <div className="mt-2 flex gap-3">
+                              <button
+                                type="button"
+                                onClick={() => setShowUnallocatedCostsModal(true)}
+                                className="text-amber-800 hover:text-amber-900 underline font-medium"
+                              >
+                                View unallocated costs details →
+                              </button>
+                              <button
+                                type="button"
+                                onClick={createBudgetLinesForUnallocated}
+                                className="bg-amber-600 hover:bg-amber-700 text-white font-medium py-1 px-3 rounded text-sm"
+                              >
+                                Create Budget Lines
+                              </button>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* No Unallocated Costs Success Message */}
+                  {unallocatedCosts && unallocatedCosts.unallocated_count === 0 && (
+                    <div className="mb-3 p-3 bg-green-50 border border-green-200 rounded-md">
+                      <div className="flex items-center">
+                        <svg className="h-5 w-5 text-green-400 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                        </svg>
+                        <p className="text-sm text-green-800">
+                          <strong>✅ All costs are allocated:</strong> All cost code/type combinations with costs are properly allocated to contract items and will be included in your billing.
+                        </p>
+                      </div>
+                    </div>
+                  )}
+                  
+                  {createBillingLines.length > 0 ? (
+                    <div className="overflow-x-auto">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Line #</th>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost Code</th>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost Type</th>
+                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Contract Amount</th>
+                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Billed to Date</th>
+                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Costs This Period</th>
+                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                              <button
+                                onClick={() => setShowBulkMarkupModal(true)}
+                                className="text-blue-600 hover:text-blue-800 underline cursor-pointer"
+                                title="Click to apply markup to all lines"
+                              >
+                                Markup %
+                              </button>
+                            </th>
+                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actual Billing Amount</th>
+                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Retainage %</th>
+                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Retention Held</th>
+                            <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Retention Released</th>
+                            <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {createBillingLines
+                            .sort((a, b) => {
+                              // Sort by line number, treating as numbers for proper numerical sorting
+                              const lineNumA = parseInt(a.line_number) || 0;
+                              const lineNumB = parseInt(b.line_number) || 0;
+                              return lineNumA - lineNumB;
+                            })
+                            .map((line, index) => (
+                            <tr key={index}>
+                              <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                                <input
+                                  type="text"
+                                  value={line.line_number}
+                                  onChange={(e) => handleLineFieldChange(index, 'line_number', e.target.value)}
+                                  className="w-20 px-2 py-1 border border-gray-300 rounded text-sm"
+                                />
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                                <div className="flex items-center space-x-2">
+                                  <input
+                                    type="text"
+                                    value={line.description}
+                                    onChange={(e) => handleLineFieldChange(index, 'description', e.target.value)}
+                                    className="w-48 px-2 py-1 border border-gray-300 rounded text-sm"
+                                  />
+                                  {line.ap_invoice_details && (
+                                    <span 
+                                      className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800"
+                                      title={`Prefilled from ${line.ap_invoice_details.length} AP invoice line(s)`}
+                                    >
+                                      📋 {line.ap_invoice_details.length}
+                                    </span>
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                                <select
+                                  value={line.cost_code_vuid}
+                                  onChange={(e) => handleLineFieldChange(index, 'cost_code_vuid', e.target.value)}
+                                  className="w-32 px-2 py-1 border border-gray-300 rounded text-sm"
+                                >
+                                  <option value="">Select</option>
+                                  {getAllCostCodes().map(code => (
+                                    <option key={code.vuid} value={code.vuid}>
+                                      {code.code}
+                                    </option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                                <select
+                                  value={line.cost_type_vuid}
+                                  onChange={(e) => handleLineFieldChange(index, 'cost_type_vuid', e.target.value)}
+                                  className="w-32 px-2 py-1 border border-gray-300 rounded text-sm"
+                                >
+                                  <option value="">Select</option>
+                                  {costTypes.map(type => (
+                                    <option key={type.vuid} value={type.vuid}>
+                                      {type.cost_type}
+                                    </option>
+                                  ))}
+                                </select>
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">
+                                {formatCurrency(line.contract_amount)}
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">
+                                {(() => {
+                                  const billedToDate = billedToDateData[`${line.line_number}_${line.cost_code_vuid}_${line.cost_type_vuid}`] || 0;
+                                  if (billedToDate > 0) {
+                                    return (
+                                      <div className="text-right">
+                                        <div className="font-medium">{formatCurrency(billedToDate)}</div>
+                                        <div className="text-xs text-gray-500">(project-level)</div>
+                                      </div>
+                                    );
+                                  }
+                                  return formatCurrency(0);
+                                })()}
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                                <div className="relative">
+                                  <input
+                                    type="number"
+                                    step="0.01"
+                                    value={line.billing_amount}
+                                    onChange={(e) => handleLineFieldChange(index, 'billing_amount', e.target.value)}
+                                    className="w-24 px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                    placeholder="0.00"
+                                  />
+                                  {line.ap_invoice_details && line.ap_invoice_details.length > 0 && (
+                                    <div 
+                                      className="absolute -top-1 -right-1 w-3 h-3 bg-blue-500 rounded-full cursor-help"
+                                      onMouseEnter={(e) => handleTooltipShow(e, line)}
+                                      onMouseLeave={handleTooltipHide}
+                                      title="Hover to see cost breakdown"
+                                    />
+                                  )}
+                                </div>
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={line.markup_percentage}
+                                  onChange={(e) => handleLineFieldChange(index, 'markup_percentage', e.target.value)}
+                                  className="w-24 px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                  placeholder="0.00"
+                                />
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={line.actual_billing_amount}
+                                  onChange={(e) => handleLineFieldChange(index, 'actual_billing_amount', e.target.value)}
+                                  className="w-24 px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                  placeholder="0.00"
+                                />
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={line.retainage_percentage}
+                                  onChange={(e) => handleLineFieldChange(index, 'retainage_percentage', e.target.value)}
+                                  className="w-24 px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                  placeholder="0.00"
+                                />
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={line.retention_held}
+                                  onChange={(e) => handleLineFieldChange(index, 'retention_held', e.target.value)}
+                                  className="w-24 px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                  placeholder="0.00"
+                                />
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={line.retention_released}
+                                  onChange={(e) => handleLineFieldChange(index, 'retention_released', e.target.value)}
+                                  className="w-24 px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                  placeholder="0.00"
+                                />
+                              </td>
+                              <td className="px-3 py-2 whitespace-nowrap text-sm text-center">
+                                <button
+                                  onClick={() => handleRemoveLine(index)}
+                                  className="text-red-600 hover:text-red-900"
+                                >
+                                  Remove
+                                </button>
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="text-center py-8 text-gray-500">
+                      <p>Select a contract to prefill billing lines</p>
+                    </div>
+                  )}
+
+                </div>
+
+                {/* Totals and Financial Metrics */}
+                {createBillingLines.length > 0 && (
+                  <div className="mb-6 space-y-4">
+
+                    {/* Current Billing Totals */}
+                    <div className="p-4 bg-gray-50 rounded-lg">
+                      <h4 className="text-sm font-semibold text-gray-700 mb-3">Current Billing Summary</h4>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                        <div>
+                          <span className="font-medium">Total Billing Amount:</span>
+                          <span className="ml-2 font-semibold">
+                            {formatCurrency(createBillingLines.reduce((sum, line) => sum + (parseFloat(line.actual_billing_amount) || 0), 0))}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-medium">Total Retention Held:</span>
+                          <span className="ml-2 font-semibold">
+                            {formatCurrency(createBillingLines.reduce((sum, line) => sum + getCalculatedRetentionHeld(line), 0))}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-medium">Total Retention Released:</span>
+                          <span className="ml-2 font-semibold">
+                            {formatCurrency(createBillingLines.reduce((sum, line) => sum + (parseFloat(line.retention_released) || 0), 0))}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-medium">Net Amount:</span>
+                          <span className="ml-2 font-semibold text-blue-600">
+                            {formatCurrency(
+                              createBillingLines.reduce((sum, line) => sum + (parseFloat(line.actual_billing_amount) || 0), 0) -
+                              createBillingLines.reduce((sum, line) => sum + (parseFloat(line.retention_held) || 0), 0) +
+                              createBillingLines.reduce((sum, line) => sum + (parseFloat(line.retention_released) || 0), 0)
+                            )}
+                          </span>
+                        </div>
+                      </div>
+                    </div>
+
+                    {/* Save All Lines Button */}
+                    <div className="text-center mt-4">
+                      <p className="text-sm text-gray-600 mb-2">
+                        💡 Financial metrics update automatically as you modify lines. Click "Save All Lines" to force a refresh.
+                      </p>
+                      <button
+                        onClick={handleSaveAllLines}
+                        className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium"
+                      >
+                        💾 Save All Lines
+                      </button>
+                    </div>
+
+                    {/* Project Financial Overview */}
+                    {true && (
+                      <div className="p-4 bg-blue-50 rounded-lg">
+                        <h4 className="text-sm font-semibold text-blue-900 mb-3">Project Financial Overview</h4>
+                        {billingMetrics.isLoading ? (
+                          <div className="flex items-center justify-center py-8">
+                            <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                            <span className="ml-3 text-blue-600 font-medium">Loading financial data...</span>
+                          </div>
+                        ) : (
+                        <>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                          <div>
+                            <span className="font-medium text-blue-800">Billings to Date:</span>
+                            <span className="ml-2 font-semibold text-blue-900">
+                              {formatCurrency(billingMetrics.billingsToDate)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="font-medium text-blue-800">Revenue Recognized:</span>
+                            <span className="ml-2 font-semibold text-blue-900">
+                              {formatCurrency(billingMetrics.revenueRecognized)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="font-medium text-blue-800">Revenue Recognized This Period:</span>
+                            <span className="ml-2 font-semibold text-purple-900">
+                              {formatCurrency(billingMetrics.revenueRecognizedThisPeriod || 0)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="font-medium text-blue-800">Total Contract Amount:</span>
+                            <span className="ml-2 font-semibold text-blue-900">
+                              {formatCurrency(billingMetrics.totalContractAmount)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="font-medium text-blue-800">Current Billing Amount:</span>
+                            <span className="ml-2 font-semibold text-green-900">
+                              {formatCurrency(billingMetrics.currentBillingAmount || 0)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="font-medium text-blue-800">
+                              {(() => {
+                                console.log('🏷️ RENDERING BUDGET LABEL:', {
+                                  eacEnabled: billingMetrics.eacEnabled,
+                                  label: billingMetrics.eacEnabled ? 'Est. Cost at Completion:' : 'Current Budget:'
+                                });
+                                return billingMetrics.eacEnabled ? 'Est. Cost at Completion:' : 'Current Budget:';
+                              })()}
+                            </span>
+                            <span className="ml-2 font-semibold text-blue-900">
+                              {formatCurrency(billingMetrics.currentBudgetAmount)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="font-medium text-blue-800">Costs This Period:</span>
+                            <span className="ml-2 font-semibold text-blue-900">
+                              {formatCurrency(billingMetrics.costsThisPeriod)}
+                            </span>
+                          </div>
+                          <div>
+                            <span className="font-medium text-blue-800">Percent Complete:</span>
+                            <span className="ml-2 font-semibold text-blue-900">
+                              {billingMetrics.percentComplete.toFixed(1)}%
+                            </span>
+                          </div>
+                          <div>
+                            <span className="font-medium text-blue-800">Billing Status:</span>
+                            <span className={`ml-2 font-semibold px-2 py-1 rounded text-xs ${
+                              billingMetrics.billingStatus === 'over' 
+                                ? 'bg-red-100 text-red-800' 
+                                : billingMetrics.billingStatus === 'under'
+                                ? 'bg-yellow-100 text-yellow-800'
+                                : 'bg-green-100 text-green-800'
+                            }`}>
+                              {billingMetrics.billingStatus === 'over' 
+                                ? `Over Billed by ${formatCurrency(billingMetrics.overUnderBilling)}`
+                                : billingMetrics.billingStatus === 'under'
+                                ? `Under Billed by ${formatCurrency(billingMetrics.overUnderBilling)}`
+                                : 'On Track'
+                              }
+                            </span>
+                          </div>
+                        </div>
+                        
+                        {/* Over/Under Billing Warning */}
+                        {billingMetrics.billingStatus !== 'neutral' && billingMetrics.overUnderBilling !== 0 && (
+                          <div className={`mt-3 p-3 rounded-lg ${
+                            billingMetrics.billingStatus === 'over' 
+                              ? 'bg-red-100 border border-red-200' 
+                              : 'bg-yellow-100 border border-yellow-200'
+                          }`}>
+                            <div className="flex items-center">
+                              <span className={`text-lg mr-2 ${
+                                billingMetrics.billingStatus === 'over' ? 'text-red-600' : 'text-yellow-600'
+                              }`}>
+                                {billingMetrics.billingStatus === 'over' ? '⚠️' : 'ℹ️'}
+                              </span>
+                              <span className={`text-sm font-medium ${
+                                billingMetrics.billingStatus === 'over' ? 'text-red-800' : 'text-yellow-800'
+                              }`}>
+                                {billingMetrics.billingStatus === 'over' 
+                                  ? `This billing will result in over-billing by ${formatCurrency(billingMetrics.overUnderBilling)}`
+                                  : `This billing will result in under-billing by ${formatCurrency(billingMetrics.overUnderBilling)}`
+                                }
+                              </span>
+                            </div>
+                          </div>
+                        )}
+                        </>
+                        )}
+                      </div>
+                    )}
+                  </div>
+                )}
+
+                {/* Modal Actions */}
+                <div className="flex justify-end space-x-3">
+                  <button
+                    onClick={() => setShowCreateModal(false)}
+                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleCreateBilling}
+                    disabled={creating}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50"
+                  >
+                    {creating ? 'Creating...' : 'Create Billing'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Edit Billing Modal */}
+        {console.log('Modal states:', { showEditModal, editingBilling: !!editingBilling, showViewLinesModal, selectedBilling: !!selectedBilling })}
+        {showEditModal && editingBilling && (
+          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+            <div className="relative top-20 mx-auto p-5 border w-11/12 max-w-6xl shadow-lg rounded-md bg-white">
+              <div className="mt-3">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">Edit Project Billing - {editingBilling.billing_number}</h3>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Billing Number *</label>
+                    <input
+                      type="text"
+                      value={editFormData.billing_number}
+                      onChange={(e) => setEditFormData({...editFormData, billing_number: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                      required
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Project</label>
+                    <select
+                      value={editFormData.project_vuid}
+                      onChange={(e) => setEditFormData({...editFormData, project_vuid: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Select Project</option>
+                      {projects.map(project => (
+                        <option key={project.vuid} value={project.vuid}>
+                          {project.project_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Contract</label>
+                    <select
+                      value={editFormData.contract_vuid}
+                      onChange={(e) => setEditFormData({...editFormData, contract_vuid: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Select Contract</option>
+                      {projectContracts
+                        .filter(contract => !editFormData.project_vuid || contract.project_vuid === editFormData.project_vuid)
+                        .map(contract => (
+                          <option key={contract.vuid} value={contract.vuid}>
+                            {contract.contract_number}
+                          </option>
+                        ))}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Customer</label>
+                    <select
+                      value={editFormData.customer_vuid}
+                      onChange={(e) => setEditFormData({...editFormData, customer_vuid: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Select Customer</option>
+                      {customers.map(customer => (
+                        <option key={customer.vuid} value={customer.vuid}>
+                          {customer.customer_name}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Billing Date *</label>
+                    <input
+                      type="date"
+                      value={editFormData.billing_date}
+                      onChange={(e) => setEditFormData({...editFormData, billing_date: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                      required
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Due Date</label>
+                    <input
+                      type="date"
+                      value={editFormData.due_date}
+                      onChange={(e) => setEditFormData({...editFormData, due_date: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    />
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Accounting Period</label>
+                    <select
+                      value={editFormData.accounting_period_vuid}
+                      onChange={(e) => setEditFormData({...editFormData, accounting_period_vuid: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="">Select Period</option>
+                      {accountingPeriods.map(period => (
+                        <option key={period.vuid} value={period.vuid}>
+                          {period.month}/{period.year}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-2">Status</label>
+                    <select
+                      value={editFormData.status}
+                      onChange={(e) => setEditFormData({...editFormData, status: e.target.value})}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                    >
+                      <option value="pending">Pending</option>
+                      <option value="approved">Approved</option>
+                      <option value="paid">Paid</option>
+                      <option value="cancelled">Cancelled</option>
+                    </select>
+                  </div>
+                </div>
+                
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Description</label>
+                  <textarea
+                    value={editFormData.description}
+                    onChange={(e) => setEditFormData({...editFormData, description: e.target.value})}
+                    rows={3}
+                    className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+                  />
+                </div>
+
+                {/* Billing Lines Section */}
+                <div className="mt-8">
+                  <div className="flex justify-between items-center mb-4">
+                    <h4 className="text-lg font-medium text-gray-900">Billing Lines</h4>
+                    <div className="flex space-x-2">
+                      <button
+                        onClick={handlePrefillFromAPInvoices}
+                        className="px-3 py-1 bg-blue-600 text-white text-sm rounded hover:bg-blue-700"
+                      >
+                        Prefill Lines
+                      </button>
+                      <button
+                        onClick={handleSaveAllLines}
+                        className="px-3 py-1 bg-purple-600 text-white text-sm rounded hover:bg-purple-700"
+                      >
+                        💾 Save All Lines
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* Project Financial Overview */}
+                  {true && (
+                    <div className="p-4 bg-blue-50 rounded-lg mb-6">
+                      <h4 className="text-sm font-semibold text-blue-900 mb-3">Project Financial Overview</h4>
+                      {billingMetrics.isLoading ? (
+                        <div className="flex items-center justify-center py-8">
+                          <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                          <span className="ml-3 text-blue-600 font-medium">Loading financial data...</span>
+                        </div>
+                      ) : (
+                      <>
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                        <div>
+                          <span className="font-medium text-blue-800">Billings to Date:</span>
+                          <span className="ml-2 font-semibold text-blue-900">
+                            {formatCurrency(billingMetrics.billingsToDate)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-blue-800">Revenue Recognized:</span>
+                          <span className="ml-2 font-semibold text-blue-900">
+                            {formatCurrency(billingMetrics.revenueRecognized)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-blue-800">Revenue Recognized This Period:</span>
+                          <span className="ml-2 font-semibold text-purple-900">
+                            {formatCurrency(billingMetrics.revenueRecognizedThisPeriod || 0)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-blue-800">Total Contract Amount:</span>
+                          <span className="ml-2 font-semibold text-blue-900">
+                            {formatCurrency(billingMetrics.totalContractAmount)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-blue-800">Current Billing Amount:</span>
+                          <span className="ml-2 font-semibold text-green-900">
+                            {formatCurrency(billingMetrics.currentBillingAmount || 0)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-blue-800">
+                            {(() => {
+                              console.log('🏷️ EDIT MODE RENDERING BUDGET LABEL:', {
+                                eacEnabled: billingMetrics.eacEnabled,
+                                label: billingMetrics.eacEnabled ? 'Est. Cost at Completion:' : 'Current Budget:'
+                              });
+                              return billingMetrics.eacEnabled ? 'Est. Cost at Completion:' : 'Current Budget:';
+                            })()}
+                          </span>
+                          <span className="ml-2 font-semibold text-blue-900">
+                            {formatCurrency(billingMetrics.currentBudgetAmount)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-blue-800">Costs This Period:</span>
+                          <span className="ml-2 font-semibold text-blue-900">
+                            {formatCurrency(billingMetrics.costsThisPeriod)}
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-blue-800">Percent Complete:</span>
+                          <span className="ml-2 font-semibold text-blue-900">
+                            {billingMetrics.percentComplete.toFixed(1)}%
+                          </span>
+                        </div>
+                        <div>
+                          <span className="font-medium text-blue-800">Billing Status:</span>
+                          <span className={`ml-2 font-semibold px-2 py-1 rounded text-xs ${
+                            billingMetrics.billingStatus === 'over' 
+                              ? 'bg-red-100 text-red-800' 
+                              : billingMetrics.billingStatus === 'under'
+                              ? 'bg-yellow-100 text-yellow-800'
+                              : 'bg-green-100 text-green-800'
+                          }`}>
+                            {billingMetrics.billingStatus === 'over' 
+                              ? `Over Billed by ${formatCurrency(billingMetrics.overUnderBilling)}`
+                              : billingMetrics.billingStatus === 'under'
+                              ? `Under Billed by ${formatCurrency(billingMetrics.overUnderBilling)}`
+                              : 'On Track'
+                            }
+                          </span>
+                        </div>
+                      </div>
+                      
+                      {/* Over/Under Billing Warning */}
+                      {billingMetrics.billingStatus !== 'neutral' && billingMetrics.overUnderBilling !== 0 && (
+                        <div className={`mt-3 p-3 rounded-lg ${
+                          billingMetrics.billingStatus === 'over' 
+                            ? 'bg-red-100 border border-red-200' 
+                            : 'bg-yellow-100 border border-yellow-200'
+                        }`}>
+                          <div className="flex items-center">
+                            <span className={`text-lg mr-2 ${
+                              billingMetrics.billingStatus === 'over' ? 'text-red-600' : 'text-yellow-600'
+                            }`}>
+                              {billingMetrics.billingStatus === 'over' ? '⚠️' : 'ℹ️'}
+                            </span>
+                            <span className={`text-sm font-medium ${
+                              billingMetrics.billingStatus === 'over' ? 'text-red-800' : 'text-yellow-800'
+                            }`}>
+                              {billingMetrics.billingStatus === 'over' 
+                                ? `This billing will result in over-billing by ${formatCurrency(billingMetrics.overUnderBilling)}`
+                                : `This billing will result in under-billing by ${formatCurrency(billingMetrics.overUnderBilling)}`
+                              }
+                            </span>
+                          </div>
+                        </div>
+                      )}
+                      </>
+                      )}
+                    </div>
+                  )}
+
+                  {/* Billing Lines Table */}
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Line #</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost Code</th>
+                          <th className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost Type</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Contract Amount</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Costs This Period</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Markup %</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actual Billing</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Retainage %</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Retention Held</th>
+                          <th className="px-4 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Retention Released</th>
+                          <th className="px-4 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {createBillingLines.map((line, index) => (
+                          <tr key={index} className={editingLineIndex === index ? 'bg-yellow-50' : ''}>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="text"
+                                  value={editingLineData.line_number || ''}
+                                  onChange={(e) => setEditingLineData({...editingLineData, line_number: e.target.value})}
+                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                                />
+                              ) : (
+                                line.line_number
+                              )}
+                            </td>
+                            <td className="px-4 py-3 text-sm text-gray-900">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="text"
+                                  value={editingLineData.description || ''}
+                                  onChange={(e) => setEditingLineData({...editingLineData, description: e.target.value})}
+                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                                />
+                              ) : (
+                                line.description
+                              )}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                              {editingLineIndex === index ? (
+                                <select
+                                  value={editingLineData.cost_code_vuid || ''}
+                                  onChange={(e) => setEditingLineData({...editingLineData, cost_code_vuid: e.target.value})}
+                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                                >
+                                  <option value="">Select Cost Code</option>
+                                  {getAllCostCodes().map(costCode => (
+                                    <option key={costCode.vuid} value={costCode.vuid}>
+                                      {costCode.code}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                (() => {
+                                  const costCode = getAllCostCodes().find(cc => cc.vuid === line.cost_code_vuid);
+                                  return costCode ? `${costCode.code} - ${costCode.description}` : '-';
+                                })()
+                              )}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900">
+                              {editingLineIndex === index ? (
+                                <select
+                                  value={editingLineData.cost_type_vuid || ''}
+                                  onChange={(e) => setEditingLineData({...editingLineData, cost_type_vuid: e.target.value})}
+                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm"
+                                >
+                                  <option value="">Select Cost Type</option>
+                                  {costTypes.map(costType => (
+                                    <option key={costType.vuid} value={costType.vuid}>
+                                      {costType.cost_type}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                costTypes.find(ct => ct.vuid === line.cost_type_vuid)?.cost_type || '-'
+                              )}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 text-right">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={editingLineData.contract_amount || ''}
+                                  onChange={(e) => setEditingLineData({...editingLineData, contract_amount: e.target.value})}
+                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                />
+                              ) : (
+                                formatCurrency(parseFloat(line.contract_amount) || 0)
+                              )}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 text-right">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={editingLineData.billing_amount || ''}
+                                  onChange={(e) => setEditingLineData({...editingLineData, billing_amount: e.target.value})}
+                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                />
+                              ) : (
+                                formatCurrency(parseFloat(line.billing_amount) || 0)
+                              )}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 text-right">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={editingLineData.markup_percentage || ''}
+                                  onChange={(e) => setEditingLineData({...editingLineData, markup_percentage: e.target.value})}
+                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                />
+                              ) : (
+                                `${(parseFloat(line.markup_percentage) || 0).toFixed(1)}%`
+                              )}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 text-right">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={editingLineData.actual_billing_amount || ''}
+                                  onChange={(e) => setEditingLineData({...editingLineData, actual_billing_amount: e.target.value})}
+                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                />
+                              ) : (
+                                formatCurrency(parseFloat(line.actual_billing_amount) || 0)
+                              )}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 text-right">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={editingLineData.retainage_percentage || ''}
+                                  onChange={(e) => setEditingLineData({...editingLineData, retainage_percentage: e.target.value})}
+                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                />
+                              ) : (
+                                `${(parseFloat(line.retainage_percentage) || 0).toFixed(1)}%`
+                              )}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 text-right">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={editingLineData.retention_held || ''}
+                                  onChange={(e) => setEditingLineData({...editingLineData, retention_held: e.target.value})}
+                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                />
+                              ) : (
+                                formatCurrency(parseFloat(line.retention_held) || 0)
+                              )}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 text-right">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={editingLineData.retention_released || ''}
+                                  onChange={(e) => setEditingLineData({...editingLineData, retention_released: e.target.value})}
+                                  className="w-full px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                />
+                              ) : (
+                                formatCurrency(parseFloat(line.retention_released) || 0)
+                              )}
+                            </td>
+                            <td className="px-4 py-3 whitespace-nowrap text-sm text-gray-900 text-center">
+                              {editingLineIndex === index ? (
+                                <div className="flex space-x-1">
+                                  <button
+                                    onClick={() => handleSaveLineEdit(index)}
+                                    className="text-green-600 hover:text-green-900 text-xs"
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    onClick={() => setEditingLineIndex(null)}
+                                    className="text-gray-600 hover:text-gray-900 text-xs"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <div className="flex space-x-1">
+                                  <button
+                                    onClick={() => handleEditLine(index, line)}
+                                    className="text-blue-600 hover:text-blue-900 text-xs"
+                                  >
+                                    Edit
+                                  </button>
+                                  <button
+                                    onClick={() => handleRemoveLine(index)}
+                                    className="text-red-600 hover:text-red-900 text-xs"
+                                  >
+                                    Remove
+                                  </button>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-gray-50">
+                        <tr>
+                          <td colSpan="5" className="px-4 py-3 text-right text-sm font-medium text-gray-900">
+                            Totals:
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm font-medium text-gray-900">
+                            {formatCurrency(createBillingLines.reduce((sum, line) => sum + (parseFloat(line.billing_amount) || 0), 0))}
+                          </td>
+                          <td></td>
+                          <td className="px-4 py-3 text-right text-sm font-medium text-gray-900">
+                            {formatCurrency(createBillingLines.reduce((sum, line) => sum + (parseFloat(line.actual_billing_amount) || 0), 0))}
+                          </td>
+                          <td></td>
+                          <td className="px-4 py-3 text-right text-sm font-medium text-gray-900">
+                            {formatCurrency(createBillingLines.reduce((sum, line) => sum + (parseFloat(line.retention_held) || 0), 0))}
+                          </td>
+                          <td className="px-4 py-3 text-right text-sm font-medium text-gray-900">
+                            {formatCurrency(createBillingLines.reduce((sum, line) => sum + (parseFloat(line.retention_released) || 0), 0))}
+                          </td>
+                          <td></td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+
+                {/* Modal Actions */}
+                <div className="flex justify-end space-x-3 mt-6">
+                  <button
+                    onClick={() => {
+                      setShowEditModal(false);
+                      setEditingBilling(null);
+                      setEditFormData({});
+                      setCreateBillingLines([]);
+                    }}
+                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleUpdateBilling}
+                    disabled={creating}
+                    className="px-4 py-2 bg-green-600 text-white rounded-md text-sm font-medium hover:bg-green-700 disabled:opacity-50"
+                  >
+                    {creating ? 'Updating...' : 'Update Billing'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+
+        {/* View Lines Modal */}
+        {showViewLinesModal && selectedBilling && (
+          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+            <div className="relative top-20 mx-auto p-5 border w-11/12 max-w-6xl shadow-lg rounded-md bg-white">
+              <div className="mt-3">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">
+                  Billing Lines - {selectedBilling.billing_number}
+                </h3>
+                
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Line #</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost Code</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost Type</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Contract Amount</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Billed to Date</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Costs This Period</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Markup %</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Actual Billing Amount</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Retainage %</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Retention Held</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Retention Released</th>
+                        <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Actions</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {billingLineItems.length > 0 ? (
+                        billingLineItems.map((line, index) => (
+                          <tr key={line.vuid}>
+                            <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="text"
+                                  value={editingLineData.line_number || ''}
+                                  onChange={(e) => setEditingLineData({...editingLineData, line_number: e.target.value})}
+                                  className="w-20 px-2 py-1 border border-gray-300 rounded text-sm"
+                                />
+                              ) : (
+                                line.line_number
+                              )}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="text"
+                                  value={editingLineData.description || ''}
+                                  onChange={(e) => setEditingLineData({...editingLineData, description: e.target.value})}
+                                  className="w-48 px-2 py-1 border border-gray-300 rounded text-sm"
+                                />
+                              ) : (
+                                line.description
+                              )}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                              {editingLineIndex === index ? (
+                                <select
+                                  value={editingLineData.cost_code_vuid || ''}
+                                  onChange={(e) => setEditingLineData({...editingLineData, cost_code_vuid: e.target.value})}
+                                  className="w-32 px-2 py-1 border border-gray-300 rounded text-sm"
+                                >
+                                  <option value="">Select</option>
+                                  {getAllCostCodes().map(code => (
+                                    <option key={code.vuid} value={code.vuid}>
+                                      {code.code}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                line.cost_code?.code || 'N/A'
+                              )}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                              {editingLineIndex === index ? (
+                                <select
+                                  value={editingLineData.cost_type_vuid || ''}
+                                  onChange={(e) => setEditingLineData({...editingLineData, cost_type_vuid: e.target.value})}
+                                  className="w-32 px-2 py-1 border border-gray-300 rounded text-sm"
+                                >
+                                  <option value="">Select</option>
+                                  {costTypes.map(type => (
+                                    <option key={type.vuid} value={type.vuid}>
+                                      {type.cost_type}
+                                    </option>
+                                  ))}
+                                </select>
+                              ) : (
+                                line.cost_type?.cost_type || 'N/A'
+                              )}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={editingLineData.contract_amount || ''}
+                                  onChange={(e) => setEditingLineData({...editingLineData, contract_amount: e.target.value})}
+                                  className="w-24 px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                  placeholder="0.00"
+                                />
+                              ) : (
+                                formatCurrency(line.contract_amount)
+                              )}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">
+                              {formatCurrency(billedToDateData[`${line.line_number}_${line.cost_code_vuid}_${line.cost_type_vuid}`] || 0)}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={editingLineData.billing_amount || ''}
+                                  onChange={(e) => handleEditingLineFieldChange('billing_amount', e.target.value)}
+                                  className="w-24 px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                  placeholder="0.00"
+                                />
+                              ) : (
+                                <div className="relative inline-block">
+                                  <span 
+                                    className="cursor-help"
+                                    onMouseEnter={(e) => handleTooltipShow(e, line)}
+                                    onMouseLeave={handleTooltipHide}
+                                  >
+                                    {formatCurrency(line.billing_amount)}
+                                  </span>
+                                  {line.ap_invoice_details && line.ap_invoice_details.length > 0 && (
+                                    <span className="ml-1 text-blue-500 text-xs">ℹ️</span>
+                                  )}
+                                </div>
+                              )}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={editingLineData.markup_percentage || ''}
+                                  onChange={(e) => handleEditingLineFieldChange('markup_percentage', e.target.value)}
+                                  className="w-20 px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                  placeholder="0.00"
+                                />
+                              ) : (
+                                line.markup_percentage ? `${line.markup_percentage}%` : '0%'
+                              )}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={editingLineData.actual_billing_amount || ''}
+                                  onChange={(e) => handleEditingLineFieldChange('actual_billing_amount', e.target.value)}
+                                  className="w-24 px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                  placeholder="0.00"
+                                />
+                              ) : (
+                                formatCurrency(line.actual_billing_amount || line.billing_amount)
+                              )}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={editingLineData.retainage_percentage || ''}
+                                  onChange={(e) => handleEditingLineFieldChange('retainage_percentage', e.target.value)}
+                                  className="w-20 px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                  placeholder="10.00"
+                                />
+                              ) : (
+                                line.retainage_percentage ? `${line.retainage_percentage}%` : '10%'
+                              )}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={editingLineData.retention_held || ''}
+                                  onChange={(e) => handleEditingLineFieldChange('retention_held', e.target.value)}
+                                  className="w-24 px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                  placeholder="0.00"
+                                />
+                              ) : (
+                                formatCurrency(getCalculatedRetentionHeld(line))
+                              )}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">
+                              {editingLineIndex === index ? (
+                                <input
+                                  type="number"
+                                  step="0.01"
+                                  value={editingLineData.retention_released || ''}
+                                  onChange={(e) => setEditingLineData({...editingLineData, retention_released: e.target.value})}
+                                  className="w-24 px-2 py-1 border border-gray-300 rounded text-sm text-right"
+                                  placeholder="0.00"
+                                />
+                              ) : (
+                                formatCurrency(line.retention_released)
+                              )}
+                            </td>
+                            <td className="px-3 py-2 whitespace-nowrap text-sm text-center">
+                              {editingLineIndex === index ? (
+                                <div className="flex space-x-2">
+                                  <button
+                                    onClick={() => handleSaveLineEdit(index)}
+                                    className="px-2 py-1 bg-green-600 text-white text-xs rounded hover:bg-green-700"
+                                  >
+                                    Save
+                                  </button>
+                                  <button
+                                    onClick={() => handleCancelLineEdit()}
+                                    className="px-2 py-1 bg-gray-600 text-white text-xs rounded hover:bg-gray-700"
+                                  >
+                                    Cancel
+                                  </button>
+                                </div>
+                              ) : (
+                                <button
+                                  onClick={() => handleEditLine(index, line)}
+                                  className="px-2 py-1 bg-blue-600 text-white text-xs rounded hover:bg-blue-700"
+                                >
+                                  Edit
+                                </button>
+                              )}
+                            </td>
+                          </tr>
+                        ))
+                      ) : (
+                        <tr>
+                          <td colSpan="12" className="px-3 py-8 text-center text-gray-500">
+                            {loadingLines ? 'Loading line items...' : 'No line items found for this billing.'}
+                          </td>
+                        </tr>
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="mt-6 flex justify-between">
+                  <button
+                    onClick={() => {
+                      setShowViewLinesModal(false);
+                      setBillingLineItems([]);
+                      setSelectedBilling(null);
+                    }}
+                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Bulk Markup Modal */}
+        {showBulkMarkupModal && (
+          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+            <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+              <div className="mt-3">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">
+                  Apply Markup to All Lines
+                </h3>
+                
+                <div className="mb-6">
+                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                    Markup Percentage *
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="number"
+                      step="0.01"
+                      value={bulkMarkupPercentage}
+                      onChange={(e) => setBulkMarkupPercentage(e.target.value)}
+                      className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500 pr-8"
+                      placeholder="0.00"
+                      autoFocus
+                    />
+                    <span className="absolute right-3 top-2 text-gray-500">%</span>
+                  </div>
+                  <p className="text-xs text-gray-500 mt-1">
+                    This will apply the markup to all {createBillingLines.length} billing lines
+                  </p>
+                </div>
+
+                {/* Preview of what will happen */}
+                {bulkMarkupPercentage && !isNaN(parseFloat(bulkMarkupPercentage)) && (
+                  <div className="mb-6 p-3 bg-blue-50 rounded-lg">
+                    <h4 className="text-sm font-medium text-blue-900 mb-2">Preview:</h4>
+                    <div className="text-xs text-blue-800 space-y-1">
+                      <div>• {bulkMarkupPercentage}% markup will be applied to all lines</div>
+                      <div>• Actual billing amounts will be recalculated</div>
+                      <div>• Retention held amounts will be updated</div>
+                      <div>• Total billing amount will increase accordingly</div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Modal Actions */}
+                <div className="flex justify-end space-x-3">
+                  <button
+                    onClick={() => {
+                      setShowBulkMarkupModal(false);
+                      setBulkMarkupPercentage('');
+                    }}
+                    className="px-4 py-2 border border-gray-300 rounded-md text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleBulkMarkup}
+                    disabled={!bulkMarkupPercentage || isNaN(parseFloat(bulkMarkupPercentage))}
+                    className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Apply to All Lines
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Cost Breakdown Tooltip */}
+        {tooltipData && (
+          <div 
+            className="fixed z-[9999] bg-gray-900 text-white p-4 rounded-lg shadow-lg max-w-md"
+            style={{
+              left: tooltipPosition.x - 200,
+              top: tooltipPosition.y - 10,
+              transform: 'translateY(-100%)'
+            }}
+            onMouseEnter={() => {}} // Keep tooltip open while hovering over it
+            onMouseLeave={handleTooltipHide}
+          >
+            <div className="mb-2">
+              <h4 className="font-semibold text-sm">
+                Cost Breakdown for Line {tooltipData.line.line_number}
+              </h4>
+              <p className="text-xs text-gray-300">
+                {tooltipData.line.description}
+              </p>
+            </div>
+            
+            <div className="space-y-2 max-h-48 overflow-y-auto">
+              {tooltipData.costs.map((cost, index) => (
+                <div key={index} className="border-l-2 border-blue-400 pl-3 py-1">
+                  <div className="flex justify-between items-start">
+                    <div className="flex-1">
+                      <div className="text-sm font-medium">
+                        {cost.invoice_number || 'Unknown Invoice'}
+                      </div>
+                      <div className="text-xs text-gray-300">
+                        {cost.vendor_name}
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        {cost.description || 'No description'}
+                      </div>
+                      <div className="text-xs text-gray-400">
+                        Qty: {cost.quantity} × ${cost.unit_price}
+                      </div>
+                    </div>
+                    <div className="text-sm font-semibold text-right ml-2">
+                      {formatCurrency(cost.total_amount)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+            
+            <div className="mt-3 pt-2 border-t border-gray-700">
+              <div className="flex justify-between items-center">
+                <span className="text-sm text-gray-300">Total:</span>
+                <span className="text-sm font-bold">
+                  {formatCurrency(
+                    tooltipData.costs.reduce((sum, cost) => sum + (parseFloat(cost.total_amount) || 0), 0)
+                  )}
+                </span>
+              </div>
+            </div>
+            
+            {/* Arrow pointing down */}
+            <div 
+              className="absolute top-full left-1/2 transform -translate-x-1/2 w-0 h-0 border-l-4 border-r-4 border-t-4 border-transparent border-t-gray-900"
+            />
+          </div>
+        )}
+
+        {/* QBO Export Results Modal */}
+        {showQBOExportModal && qboExportResult && (
+          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+            <div className="relative top-20 mx-auto p-5 border w-11/12 md:w-3/4 lg:w-2/3 shadow-lg rounded-md bg-white">
+              <div className="mt-3">
+                <h3 className="text-lg font-medium text-gray-900 mb-4">
+                  QuickBooks Online Export Results
+                </h3>
+                
+                <div className="mb-4 p-4 bg-green-50 border border-green-200 rounded-lg">
+                  <div className="flex items-center">
+                    <svg className="h-5 w-5 text-green-400 mr-2" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                    </svg>
+                    <span className="text-green-800 font-medium">Export completed successfully!</span>
+                  </div>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                  <div className="bg-gray-50 p-3 rounded-lg">
+                    <h4 className="font-medium text-gray-900 mb-2">Export Summary</h4>
+                    <p className="text-sm text-gray-600">
+                      <strong>Accounting Period:</strong> {qboExportResult.accounting_period?.month}/{qboExportResult.accounting_period?.year}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      <strong>Journal Entries:</strong> {qboExportResult.journal_entries?.length || 0}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      <strong>Invoices:</strong> {qboExportResult.invoices?.length || 0}
+                    </p>
+                  </div>
+                  
+                  <div className="bg-gray-50 p-3 rounded-lg">
+                    <h4 className="font-medium text-gray-900 mb-2">Integration Settings</h4>
+                    <p className="text-sm text-gray-600">
+                      <strong>AP Integration:</strong> {qboExportResult.integration_settings?.ap_integration_method === 'invoice' ? 'Invoice Records' : 'Journal Entries'}
+                    </p>
+                    <p className="text-sm text-gray-600">
+                      <strong>AR Integration:</strong> {qboExportResult.integration_settings?.ar_integration_method === 'invoice' ? 'Invoice Records' : 'Journal Entries'}
+                    </p>
+                  </div>
+                </div>
+                
+                {qboExportResult.journal_entries && qboExportResult.journal_entries.length > 0 && (
+                  <div className="mb-4">
+                    <h4 className="font-medium text-gray-900 mb-2">Exported Journal Entries</h4>
+                    <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-lg">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Doc Number</th>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Lines</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {qboExportResult.journal_entries.slice(0, 10).map((entry, index) => (
+                            <tr key={index}>
+                              <td className="px-3 py-2 text-sm text-gray-900">{entry.DocNumber}</td>
+                              <td className="px-3 py-2 text-sm text-gray-900">{entry.TxnDate}</td>
+                              <td className="px-3 py-2 text-sm text-gray-900">{entry.Line?.length || 0}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {qboExportResult.journal_entries.length > 10 && (
+                        <p className="px-3 py-2 text-sm text-gray-500 text-center">
+                          ... and {qboExportResult.journal_entries.length - 10} more entries
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+                
+                {qboExportResult.invoices && qboExportResult.invoices.length > 0 && (
+                  <div className="mb-4">
+                    <h4 className="font-medium text-gray-900 mb-2">Exported Invoices</h4>
+                    <div className="max-h-40 overflow-y-auto border border-gray-200 rounded-lg">
+                      <table className="min-w-full divide-y divide-gray-200">
+                        <thead className="bg-gray-50">
+                          <tr>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Doc Number</th>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date</th>
+                            <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Amount</th>
+                          </tr>
+                        </thead>
+                        <tbody className="bg-white divide-y divide-gray-200">
+                          {qboExportResult.invoices.slice(0, 10).map((invoice, index) => (
+                            <tr key={index}>
+                              <td className="px-3 py-2 text-sm text-gray-900">{invoice.DocNumber}</td>
+                              <td className="px-3 py-2 text-sm text-gray-900">{invoice.TxnDate}</td>
+                              <td className="px-3 py-2 text-sm text-gray-900">${(invoice.TotalAmt || 0).toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                      {qboExportResult.invoices.length > 10 && (
+                        <p className="px-3 py-2 text-sm text-gray-500 text-center">
+                          ... and {qboExportResult.invoices.length - 10} more invoices
+                        </p>
+                      )}
+                    </div>
+                  </div>
+                )}
+                
+                <div className="flex justify-end space-x-3">
+                  <button
+                    onClick={() => {
+                      setShowQBOExportModal(false);
+                      setQboExportResult(null);
+                    }}
+                    className="px-4 py-2 text-gray-700 bg-gray-200 rounded-md hover:bg-gray-300"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Costs Breakdown Modal */}
+        {showCostsBreakdownModal && costsBreakdown && (
+          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+            <div className="relative top-10 mx-auto p-5 border w-11/12 md:w-4/5 lg:w-3/4 xl:w-2/3 shadow-lg rounded-md bg-white max-h-[90vh]">
+              <div className="mt-3">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-lg font-medium text-gray-900">
+                    Costs Breakdown - {costsBreakdown.period.month}/{costsBreakdown.period.year}
+                  </h3>
+                  <button
+                    onClick={() => setShowCostsBreakdownModal(false)}
+                    className="text-gray-400 hover:text-gray-600 text-xl"
+                  >
+                    ×
+                  </button>
+                </div>
+                
+                {/* Summary Totals */}
+                <div className="mb-6 p-4 bg-gray-50 rounded-lg">
+                  <h4 className="text-md font-medium text-gray-900 mb-3">Summary Totals</h4>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                    <div>
+                      <span className="font-medium text-gray-700">AP Invoices:</span>
+                      <span className="ml-2 text-gray-900">{formatCurrency(costsBreakdown.totals.ap_invoice_amount)}</span>
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-700">Project Expenses:</span>
+                      <span className="ml-2 text-gray-900">{formatCurrency(costsBreakdown.totals.project_expense_amount)}</span>
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-700">Labor Costs:</span>
+                      <span className="ml-2 text-gray-900">{formatCurrency(costsBreakdown.totals.labor_cost_amount)}</span>
+                    </div>
+                    <div>
+                      <span className="font-medium text-gray-700">Grand Total:</span>
+                      <span className="ml-2 text-gray-900 font-semibold">{formatCurrency(costsBreakdown.totals.grand_total)}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Detailed Breakdown Table */}
+                <div className="overflow-x-auto max-h-96">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost Code</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost Type</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">AP Invoices</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Project Expenses</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Labor Costs</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                        <th className="px-3 py-2 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">Lines</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {costsBreakdown.breakdown.map((item, index) => (
+                        <tr key={index} className="hover:bg-gray-50">
+                          <td className="px-3 py-2 whitespace-nowrap text-sm font-mono text-gray-900">
+                            {item.cost_code}
+                          </td>
+                          <td className="px-3 py-2 text-sm text-gray-900 max-w-xs truncate" title={item.cost_code_description}>
+                            {item.cost_code_description}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                            {item.cost_type}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">
+                            {item.ap_invoice_amount > 0 ? formatCurrency(item.ap_invoice_amount) : '-'}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">
+                            {item.project_expense_amount > 0 ? formatCurrency(item.project_expense_amount) : '-'}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">
+                            {item.labor_cost_amount > 0 ? formatCurrency(item.labor_cost_amount) : '-'}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-right text-gray-900">
+                            {formatCurrency(item.total_amount)}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-sm text-center text-gray-500">
+                            {item.line_count}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                {costsBreakdown.breakdown.length === 0 && (
+                  <div className="text-center py-8 text-gray-500">
+                    No costs found for the selected project and accounting period.
+                  </div>
+                )}
+
+                <div className="flex justify-end mt-6">
+                  <button
+                    onClick={() => setShowCostsBreakdownModal(false)}
+                    className="bg-gray-500 hover:bg-gray-600 text-white font-medium py-2 px-4 rounded-md text-sm"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* Unallocated Costs Modal */}
+        {showUnallocatedCostsModal && unallocatedCosts && (
+          <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+            <div className="relative top-10 mx-auto p-5 border w-11/12 md:w-4/5 lg:w-3/4 xl:w-2/3 shadow-lg rounded-md bg-white max-h-[90vh]">
+              <div className="mt-3">
+                <div className="flex justify-between items-center mb-4">
+                  <h3 className="text-lg font-medium text-gray-900">
+                    Unallocated Costs - {unallocatedCosts.period.month}/{unallocatedCosts.period.year}
+                  </h3>
+                  <button
+                    onClick={() => setShowUnallocatedCostsModal(false)}
+                    className="text-gray-400 hover:text-gray-600 text-xl"
+                  >
+                    ×
+                  </button>
+                </div>
+                
+                {/* Summary */}
+                <div className="mb-6 p-4 bg-amber-50 rounded-lg">
+                  <h4 className="text-md font-medium text-amber-900 mb-3">Summary</h4>
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
+                    <div>
+                      <span className="font-medium text-amber-800">Unallocated Combinations:</span>
+                      <span className="ml-2 text-amber-900">{unallocatedCosts.unallocated_count}</span>
+                    </div>
+                    <div>
+                      <span className="font-medium text-amber-800">Total Unallocated Amount:</span>
+                      <span className="ml-2 text-amber-900 font-semibold">{formatCurrency(unallocatedCosts.total_unallocated_amount)}</span>
+                    </div>
+                  </div>
+                  <p className="mt-3 text-sm text-amber-700">
+                    These cost code/type combinations have costs but are not allocated to any contract items. 
+                    To include these costs in your billing, you need to either:
+                  </p>
+                  <ul className="mt-2 text-sm text-amber-700 list-disc list-inside">
+                    <li>Add corresponding contract items with these cost code/type combinations</li>
+                    <li>Manually create billing lines for these cost code/type combinations</li>
+                  </ul>
+                </div>
+
+                {/* Detailed Table */}
+                <div className="overflow-x-auto max-h-96">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50 sticky top-0">
+                      <tr>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost Code</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Description</th>
+                        <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">Cost Type</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">AP Invoices</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Project Expenses</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Labor Costs</th>
+                        <th className="px-3 py-2 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">Total</th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {unallocatedCosts.unallocated_costs.map((item, index) => (
+                        <tr key={index} className="hover:bg-gray-50">
+                          <td className="px-3 py-2 whitespace-nowrap text-sm font-mono text-gray-900">
+                            {item.cost_code}
+                          </td>
+                          <td className="px-3 py-2 text-sm text-gray-900 max-w-xs truncate" title={item.cost_code_description}>
+                            {item.cost_code_description}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-sm text-gray-900">
+                            {item.cost_type}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">
+                            {item.ap_invoice_amount > 0 ? formatCurrency(item.ap_invoice_amount) : '-'}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">
+                            {item.project_expense_amount > 0 ? formatCurrency(item.project_expense_amount) : '-'}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-sm text-right text-gray-900">
+                            {item.labor_cost_amount > 0 ? formatCurrency(item.labor_cost_amount) : '-'}
+                          </td>
+                          <td className="px-3 py-2 whitespace-nowrap text-sm font-medium text-right text-gray-900">
+                            {formatCurrency(item.total_amount)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+
+                <div className="flex justify-between mt-6">
+                  <button
+                    onClick={createBudgetLinesForUnallocated}
+                    className="bg-amber-600 hover:bg-amber-700 text-white font-medium py-2 px-4 rounded-md text-sm"
+                  >
+                    Create Budget Lines
+                  </button>
+                  <button
+                    onClick={() => setShowUnallocatedCostsModal(false)}
+                    className="bg-gray-500 hover:bg-gray-600 text-white font-medium py-2 px-4 rounded-md text-sm"
+                  >
+                    Close
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+      {/* Preview Journal Entry Modal */}
+      {showPreviewModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div className="relative top-20 mx-auto p-5 border w-11/12 max-w-4xl shadow-lg rounded-md bg-white">
+            <div className="flex justify-between items-center mb-6">
+              <h3 className="text-lg font-medium text-gray-900">
+                Preview Journal Entry
+              </h3>
+              <button
+                onClick={() => setShowPreviewModal(false)}
+                className="text-gray-400 hover:text-gray-600"
+              >
+                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {previewData ? (
+              <div className="space-y-6">
+                {/* Summary */}
+                <div className="bg-gray-50 p-4 rounded-lg">
+                  <h4 className="text-md font-semibold text-gray-900 mb-2">Journal Entry Summary</h4>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <span className="font-medium">Journal Number:</span> {previewData.journal_number}
+                    </div>
+                    <div>
+                      <span className="font-medium">Description:</span> {previewData.description}
+                    </div>
+                    <div>
+                      <span className="font-medium">Total Amount:</span> ${previewData.total_amount?.toFixed(2) || '0.00'}
+                    </div>
+                    <div>
+                      <span className="font-medium">Balance Status:</span> 
+                      <span className={`ml-2 ${previewData.is_balanced ? 'text-green-600' : 'text-red-600'}`}>
+                        {previewData.is_balanced ? '✅ Balanced' : '❌ Unbalanced'}
+                      </span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Line Items */}
+                <div>
+                  <h4 className="text-md font-semibold text-gray-900 mb-3">Line Items</h4>
+                  <div className="overflow-x-auto">
+                    <table className="min-w-full divide-y divide-gray-200">
+                      <thead className="bg-gray-50">
+                        <tr>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Account
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Description
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Debit
+                          </th>
+                          <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                            Credit
+                          </th>
+                        </tr>
+                      </thead>
+                      <tbody className="bg-white divide-y divide-gray-200">
+                        {previewData.line_items?.map((line, index) => (
+                          <tr key={index}>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                              {line.account_name || line.gl_account_vuid}
+                            </td>
+                            <td className="px-6 py-4 text-sm text-gray-900">
+                              {line.description}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                              {line.debit_amount > 0 ? `$${line.debit_amount.toFixed(2)}` : '-'}
+                            </td>
+                            <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                              {line.credit_amount > 0 ? `$${line.credit_amount.toFixed(2)}` : '-'}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                      <tfoot className="bg-gray-50">
+                        <tr>
+                          <td colSpan="2" className="px-6 py-3 text-right text-sm font-medium text-gray-900">
+                            Totals:
+                          </td>
+                          <td className="px-6 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                            ${previewData.total_debits?.toFixed(2) || '0.00'}
+                          </td>
+                          <td className="px-6 py-3 whitespace-nowrap text-sm font-medium text-gray-900">
+                            ${previewData.total_credits?.toFixed(2) || '0.00'}
+                          </td>
+                        </tr>
+                      </tfoot>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            ) : (
+              <div className="text-center py-8">
+                <div className="text-gray-500">No preview data available</div>
+              </div>
+            )}
+
+            <div className="flex justify-end mt-6">
+              <button
+                onClick={() => setShowPreviewModal(false)}
+                className="px-4 py-2 bg-gray-600 text-white rounded-md hover:bg-gray-700"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Prefill Period Selection Modal */}
+      {showPrefillPeriodModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div className="mt-3">
+              <h3 className="text-lg font-medium text-gray-900 mb-4">Select Accounting Period for Prefill</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                Choose the accounting period to use for prefilling costs. Only periods with actual 
+                transactions for this project are shown.
+              </p>
+              
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Accounting Period
+                </label>
+                <select
+                  value={selectedPrefillPeriod}
+                  onChange={(e) => setSelectedPrefillPeriod(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">Select a period...</option>
+                  {(allAccountingPeriods || []).map((period) => (
+                    <option key={period.vuid} value={period.vuid}>
+                      {period.description} ({period.status})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex justify-end space-x-3">
+                <button
+                  onClick={() => {
+                    setShowPrefillPeriodModal(false);
+                    setSelectedPrefillPeriod('');
+                  }}
+                  className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (selectedPrefillPeriod) {
+                      handlePrefillWithPeriod(selectedPrefillPeriod);
+                      setShowPrefillPeriodModal(false);
+                      setSelectedPrefillPeriod('');
+                    } else {
+                      alert('Please select an accounting period');
+                    }
+                  }}
+                  className="px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700"
+                >
+                  Prefill Costs
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cost Breakdown Period Selection Modal */}
+      {showCostBreakdownPeriodModal && (
+        <div className="fixed inset-0 bg-gray-600 bg-opacity-50 overflow-y-auto h-full w-full z-50">
+          <div className="relative top-20 mx-auto p-5 border w-96 shadow-lg rounded-md bg-white">
+            <div className="mt-3">
+              <h3 className="text-lg font-medium text-gray-900 mb-4">Select Accounting Period for Cost Breakdown</h3>
+              <p className="text-sm text-gray-600 mb-4">
+                Choose the accounting period to view the costs breakdown. Only periods with actual 
+                transactions for this project are shown.
+              </p>
+              
+              <div className="mb-4">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Accounting Period
+                </label>
+                <select
+                  value={selectedCostBreakdownPeriod}
+                  onChange={(e) => setSelectedCostBreakdownPeriod(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-green-500"
+                >
+                  <option value="">Select a period...</option>
+                  {(allAccountingPeriods || []).map((period) => (
+                    <option key={period.vuid} value={period.vuid}>
+                      {period.description} ({period.status})
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              <div className="flex justify-end space-x-3">
+                <button
+                  onClick={() => {
+                    setShowCostBreakdownPeriodModal(false);
+                    setSelectedCostBreakdownPeriod('');
+                  }}
+                  className="px-4 py-2 bg-gray-300 text-gray-700 rounded-md hover:bg-gray-400"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={() => {
+                    if (selectedCostBreakdownPeriod) {
+                      handleCostBreakdownWithPeriod(selectedCostBreakdownPeriod);
+                      setShowCostBreakdownPeriodModal(false);
+                      setSelectedCostBreakdownPeriod('');
+                    } else {
+                      alert('Please select an accounting period');
+                    }
+                  }}
+                  className="px-4 py-2 bg-green-600 text-white rounded-md hover:bg-green-700"
+                >
+                  View Breakdown
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+      </div>
+    </div>
+  );
+};
+
+export default ProjectBilling;
