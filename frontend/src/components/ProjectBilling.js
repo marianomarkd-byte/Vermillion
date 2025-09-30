@@ -1261,9 +1261,8 @@ const ProjectBilling = () => {
           
           // Calculate current billing amount from the appropriate source (edit vs create)
           // Always use the actual billing amount from line items for accuracy
-          const currentBillingAmount = showEditModal 
-            ? billingLineItems.reduce((sum, line) => sum + (parseFloat(line.actual_billing_amount) || 0), 0)
-            : createBillingLines.reduce((sum, line) => sum + (parseFloat(line.actual_billing_amount) || 0), 0);
+          // NOTE: Both edit and create mode use createBillingLines array
+          const currentBillingAmount = createBillingLines.reduce((sum, line) => sum + (parseFloat(line.actual_billing_amount) || 0), 0);
           
           let totalBillingsWithCurrent;
           if (showEditModal && editingBilling) {
