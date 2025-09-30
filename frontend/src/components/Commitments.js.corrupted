@@ -1,0 +1,2389 @@
+import React, { useState, useEffect } from 'react';
+import { useLocation } from 'react-router-dom';
+
+const Commitments = () => {
+  const location = useLocation();
+  const [commitments, setCommitments] = useState([]);
+  const [projects, setProjects] = useState([]);
+  const [vendors, setVendors] = useState([]);
+  const [formData, setFormData] = useState({
+    commitment_number: '',
+    project_vuid: '',
+    vendor_vuid: '',
+    commitment_name: '',
+    commitment_date: '',
+    description: '',
+    status: 'active',
+    notes: ''
+  });
+  const [errors, setErrors] = useState({});
+  const [loading, setLoading] = useState(true);
+  const [filteredCommitments, setFilteredCommitments] = useState([]);
+  const [searchTerm, setSearchTerm] = useState('');
+  const [statusFilter, setStatusFilter] = useState('all');
+
+  const [currentPage, setCurrentPage] = useState(1);
+  const [commitmentsPerPage] = useState(10);
+  const [editingCommitment, setEditingCommitment] = useState(null);
+  const [showCreateForm, setShowCreateForm] = useState(false);
+  const [statusDropdownOpen, setStatusDropdownOpen] = useState(false);
+  const [formStatusDropdownOpen, setFormStatusDropdownOpen] = useState(false);
+  const [projectDropdownOpen, setProjectDropdownOpen] = useState(false);
+  const [vendorDropdownOpen, setVendorDropdownOpen] = useState(false);
+  
+  // Commitment Items state
+  const [costCodes, setCostCodes] = useState([]);
+  const [costTypes, setCostTypes] = useState([]);
+  const [selectedCommitment, setSelectedCommitment] = useState(null);
+  const [commitmentItems, setCommitmentItems] = useState([]);
+  const [showItemsGrid, setShowItemsGrid] = useState(false);
+  const [itemFormData, setItemFormData] = useState({
+    item_number: '',
+    cost_code_vuid: '',
+    cost_type_vuid: '',
+    description: '',
+    unit_of_measure: '',
+    quantity: '',
+    unit_price: '',
+    retainage: '',
+    notes: '',
+    status: 'active'
+  });
+  const [editingItem, setEditingItem] = useState(null);
+  const [showItemForm, setShowItemForm] = useState(false);
+  const [itemErrors, setItemErrors] = useState({});
+  const [costCodeDropdownOpen, setCostCodeDropdownOpen] = useState(false);
+  const [costTypeDropdownOpen, setCostTypeDropdownOpen] = useState(false);
+  const [itemStatusDropdownOpen, setItemStatusDropdownOpen] = useState(false);
+  const [costCodeSearchTerm, setCostCodeSearchTerm] = useState('');
+  const [costTypeSearchTerm, setCostTypeSearchTerm] = useState('');
+  const [projectSearchTerm, setProjectSearchTerm] = useState('');
+  const [projectDisplayValue, setProjectDisplayValue] = useState('');
+  
+  // Integration state
+  const [showRetrieveModal, setShowRetrieveModal] = useState(false);
+  const [integrations, setIntegrations] = useState([]);
+  const [retrieveIntegration, setRetrieveIntegration] = useState(null);
+
+  useEffect(() => {
+    fetchData();
+  }, []);
+
+  // Initialize search terms to prevent undefined errors
+  useEffect(() => {
+    if (costCodes.length > 0 && costTypes.length > 0) {
+      setCostCodeSearchTerm(costCodeSearchTerm || '');
+      setCostTypeSearchTerm(costTypeSearchTerm || '');
+    }
+  }, [costCodes, costTypes]);
+
+  // Handle query parameters for project filtering and commitment viewing
+  useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const projectVuid = searchParams.get('project');
+    const commitmentVuid = searchParams.get('commitment');
+    
+    if (projectVuid) {
+      // Pre-filter commitments for this project
+      setProjectSearchTerm(projectVuid);
+      
+      // Set the display value to show the project name instead of VUID
+      const project = projects.find(p => p.vuid === projectVuid);
+      if (project) {
+        setProjectDisplayValue(`${project.project_number} - ${project.project_name}`);
+      }
+      
+      // If there's also a create parameter, open the create form
+      if (searchParams.get('create') === 'true') {
+        setShowCreateForm(true);
+        // Initialize the form data with the project pre-filled
+        const nextCommitmentNumber = getNextCommitmentNumber();
+        setFormData(prev => ({
+          ...prev,
+          commitment_number: nextCommitmentNumber,
+          project_vuid: projectVuid,
+          commitment_date: new Date().toISOString().split('T')[0]
+        }));
+      }
+    }
+    
+    if (commitmentVuid) {
+      // Find and select the commitment to view
+      const commitment = commitments.find(c => c.vuid === commitmentVuid);
+      if (commitment) {
+        setSelectedCommitment(commitment);
+        fetchCommitmentItems(commitment.vuid);
+        setShowItemsGrid(true);
+      }
+    }
+  }, [location.search, commitments]);
+
+  // Handle navigation state for viewing commitments and creating for specific projects (legacy support)
+  useEffect(() => {
+    const handleLocationState = () => {
+      if (window.location.state) {
+        if (window.location.state.viewCommitment) {
+          // Find and select the commitment to view
+          const commitment = window.location.state.viewCommitment;
+          setSelectedCommitment(commitment);
+          fetchCommitmentItems(commitment.vuid);
+          setShowItemsGrid(true);
+          // Clear the state
+          window.history.replaceState({}, document.title);
+        } else if (window.location.state.createForProject) {
+          // Pre-fill the form with project data and filter commitments
+          const project = window.location.state.createForProject;
+          setFormData(prev => ({
+            ...prev,
+            project_vuid: project.vuid
+          }));
+          setShowCreateForm(true);
+          
+          // Store the project VUID directly for filtering
+          setProjectSearchTerm(project.vuid);
+          
+          // Clear the state
+          window.history.replaceState({}, document.title);
+        }
+      }
+    };
+
+    handleLocationState();
+  }, []);
+
+  // Force re-filtering when projectSearchTerm changes and commitments are loaded
+  useEffect(() => {
+    if (projectSearchTerm && commitments.length > 0) {
+      console.log('Forcing re-filter due to projectSearchTerm change:', projectSearchTerm);
+      filterAndPaginateCommitments();
+    }
+  }, [projectSearchTerm, commitments]);
+
+  useEffect(() => {
+    filterAndPaginateCommitments();
+  }, [commitments, searchTerm, statusFilter, projectSearchTerm]);
+
+  // Re-initialize form data when commitments are loaded and form is open
+  useEffect(() => {
+    if (showCreateForm && commitments.length > 0 && !formData.commitment_number) {
+      console.log('Re-initializing form data after commitments loaded');
+      const nextCommitmentNumber = getNextCommitmentNumber();
+      setFormData(prev => ({
+        ...prev,
+        commitment_number: nextCommitmentNumber
+      }));
+    }
+  }, [commitments, showCreateForm]);
+
+  // Close dropdowns when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (event) => {
+      if (!event.target.closest('.dropdown-container')) {
+        setStatusDropdownOpen(false);
+
+        setFormStatusDropdownOpen(false);
+
+        setProjectDropdownOpen(false);
+        setVendorDropdownOpen(false);
+        setCostCodeDropdownOpen(false);
+        setCostTypeDropdownOpen(false);
+        setItemStatusDropdownOpen(false);
+      }
+    };
+
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => {
+      document.removeEventListener('mousedown', handleClickOutside);
+    };
+  }, []);
+
+  const filterAndPaginateCommitments = () => {
+    console.log('Filtering commitments with projectSearchTerm:', projectSearchTerm);
+    
+    let filtered = commitments.filter(commitment => {
+      const matchesSearch = 
+        commitment.commitment_number.toLowerCase().includes(searchTerm.toLowerCase()) ||
+        commitment.description?.toLowerCase().includes(searchTerm.toLowerCase());
+      
+      const matchesStatus = statusFilter === 'all' || commitment.status === statusFilter;
+      
+      // Filter by selected project if one is selected
+      let matchesProject = true;
+      if (projectSearchTerm && projectSearchTerm !== '') {
+        // Check if projectSearchTerm is a VUID (direct match) or a formatted string
+        let projectVuid;
+        if (projectSearchTerm.includes('-') && projectSearchTerm.length === 36) {
+          // It's a VUID, use it directly
+          projectVuid = projectSearchTerm;
+        } else {
+          // It's a formatted string, parse it
+          projectVuid = getProjectVuidFromSearchTerm(projectSearchTerm);
+        }
+        console.log('Project search term:', projectSearchTerm, 'Project VUID:', projectVuid, 'Commitment project VUID:', commitment.project_vuid);
+        matchesProject = projectVuid && commitment.project_vuid === projectVuid;
+      }
+      
+      return matchesSearch && matchesStatus && matchesProject;
+    });
+    
+    console.log('Filtered commitments count:', filtered.length);
+    setFilteredCommitments(filtered);
+    setCurrentPage(1);
+  };
+
+  const getProjectVuidFromSearchTerm = (searchTerm) => {
+    // Extract project VUID from search term like "PRJ-001 - Office Building"
+    if (!searchTerm || searchTerm === '') return null;
+    
+    const project = projects.find(p => 
+      `${p.project_number} - ${p.project_name}` === searchTerm
+    );
+    return project ? project.vuid : null;
+  };
+
+  const getCurrentCommitments = () => {
+    const indexOfLastCommitment = currentPage * commitmentsPerPage;
+    const indexOfFirstCommitment = indexOfLastCommitment - commitmentsPerPage;
+    return filteredCommitments.slice(indexOfFirstCommitment, indexOfLastCommitment);
+  };
+
+  const paginate = (pageNumber) => setCurrentPage(pageNumber);
+
+  const fetchData = async () => {
+    try {
+      setLoading(true);
+      const baseURL = 'http://localhost:5001';
+      const [commitmentsRes, projectsRes, vendorsRes, costCodesRes, costTypesRes] = await Promise.all([
+        fetch(`${baseURL}/api/project-commitments`),
+        fetch(`${baseURL}/api/projects`),
+        fetch(`${baseURL}/api/vendors`),
+        fetch(`${baseURL}/api/costcodes`),
+        fetch(`${baseURL}/api/costtypes`)
+      ]);
+      
+      const [commitmentsData, projectsData, vendorsData, costCodesData, costTypesData] = await Promise.all([
+        commitmentsRes.json(),
+        projectsRes.json(),
+        vendorsRes.json(),
+        costCodesRes.json(),
+        costTypesRes.json()
+      ]);
+      
+      setCommitments(commitmentsData);
+      setProjects(projectsData);
+      setVendors(vendorsData);
+      setCostCodes(costCodesData);
+      setCostTypes(costTypesData);
+      setFilteredCommitments(commitmentsData);
+    } catch (err) {
+      console.error('Error fetching data:', err);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    setErrors({});
+
+    // Frontend validation
+    const newErrors = {};
+    if (!formData.project_vuid) {
+      newErrors.project_vuid = 'Project is required';
+    }
+    if (!formData.commitment_number) {
+      newErrors.commitment_number = 'Commitment number is required';
+    }
+    if (!formData.commitment_name) {
+      newErrors.commitment_name = 'Commitment name is required';
+    }
+    if (!formData.vendor_vuid) {
+      newErrors.vendor_vuid = 'Vendor is required';
+    }
+    if (!formData.commitment_date) {
+      newErrors.commitment_date = 'Commitment date is required';
+    }
+
+
+    if (Object.keys(newErrors).length > 0) {
+      setErrors(newErrors);
+      return;
+    }
+
+    try {
+      const baseURL = 'http://localhost:5001';
+      let savedCommitment;
+      
+      if (editingCommitment) {
+        // Update existing commitment
+        const response = await fetch(`${baseURL}/api/project-commitments/${editingCommitment.vuid}`, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(formData)
+        });
+        
+        if (!response.ok) {
+          throw new Error('Failed to update commitment');
+        }
+        
+        savedCommitment = await response.json();
+        setCommitments(commitments.map(c => 
+          c.vuid === editingCommitment.vuid ? savedCommitment : c
+        ));
+        setEditingCommitment(null);
+      } else {
+        // Create new commitment
+        const response = await fetch(`${baseURL}/api/project-commitments`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(formData)
+        });
+        
+        if (!response.ok) {
+          throw new Error('Failed to create commitment');
+        }
+        
+        savedCommitment = await response.json();
+        setCommitments([...commitments, savedCommitment]);
+      }
+      
+      // If this was a new commitment (not editing), automatically open the items grid
+      if (!editingCommitment) {
+        setSelectedCommitment(savedCommitment);
+        setShowItemsGrid(true);
+        setShowCreateForm(false);
+        
+        // Reset item form data for the new commitment
+        setItemFormData({
+          commitment_vuid: savedCommitment.vuid,
+          item_number: '0001',  // Start with 0001 for new commitment
+          cost_code_vuid: '',
+          cost_type_vuid: '',
+          description: '',
+          unit_of_measure: '',
+          quantity: '',
+          unit_price: '',
+          retainage: savedCommitment.retainage || '',  // Auto-populate from newly created commitment
+          notes: '',
+          status: 'active'
+        });
+        setCostCodeSearchTerm('');
+        setCostTypeSearchTerm('');
+        setEditingItem(null);
+        setShowItemForm(false);
+        setItemErrors({});
+      } else {
+        // If editing, just close the form
+        setFormData({
+          commitment_number: '',
+          project_vuid: '',
+          vendor_vuid: '',
+          commitment_name: '',
+          commitment_date: '',
+          original_amount: '',
+          description: '',
+          status: 'active',
+          notes: ''
+        });
+        setEditingCommitment(null);
+        setShowCreateForm(false);
+        setErrors({});
+      }
+    } catch (error) {
+      setErrors({ submit: 'An error occurred while saving the commitment' });
+    }
+  };
+
+  const handleEdit = (commitment) => {
+    setEditingCommitment(commitment);
+    setShowCreateForm(false);
+    setFormData({
+      commitment_number: commitment.commitment_number,
+      project_vuid: commitment.project_vuid,
+      vendor_vuid: commitment.vendor_vuid,
+      commitment_name: commitment.commitment_name,
+      commitment_date: commitment.commitment_date,
+      description: commitment.description || '',
+      status: commitment.status,
+      notes: commitment.notes || ''
+    });
+  };
+
+  const handleCancelEdit = () => {
+    setEditingCommitment(null);
+    setShowCreateForm(false);
+    setFormData({
+      commitment_number: '',
+      project_vuid: '',
+      vendor_vuid: '',
+      commitment_name: '',
+      commitment_date: '',
+      description: '',
+      status: 'active',
+      notes: ''
+    });
+    setErrors({});
+  };
+
+  const handleShowCreateForm = () => {
+    console.log('handleShowCreateForm called');
+    console.log('Current commitments length:', commitments.length);
+    
+    setShowCreateForm(true);
+    setEditingCommitment(null);
+    
+    // Check if we have a project from query parameters
+    const searchParams = new URLSearchParams(location.search);
+    const projectVuid = searchParams.get('project');
+    
+    // Preserve the project_vuid if we're coming from Project Details
+    const currentProjectVuid = projectVuid || formData.project_vuid;
+    
+    const nextCommitmentNumber = getNextCommitmentNumber();
+    console.log('Generated commitment number:', nextCommitmentNumber);
+    
+    const formDataToSet = {
+      commitment_number: nextCommitmentNumber, // Auto-generate commitment number
+      project_vuid: currentProjectVuid, // Keep the project if it was pre-filled
+      vendor_vuid: '',
+      commitment_name: '',
+      commitment_date: new Date().toISOString().split('T')[0], // Set today's date
+      description: '',
+      status: 'active',
+      notes: ''
+    };
+    
+    console.log('Setting form data:', formDataToSet);
+    setFormData(formDataToSet);
+    setErrors({});
+  };
+
+  const handleDelete = async (vuid) => {
+    if (!window.confirm('Are you sure you want to delete this commitment? This will also delete all associated commitment items.')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`http://localhost:5001/api/commitments/${vuid}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        // If we were viewing items for this commitment, clear the view
+        if (selectedCommitment && selectedCommitment.vuid === vuid) {
+          setSelectedCommitment(null);
+          setCommitmentItems([]);
+          setShowItemsGrid(false);
+          setShowItemForm(false);
+        }
+        
+        setCommitments(commitments.filter(c => c.vuid !== vuid));
+      } else {
+        alert('Failed to delete commitment');
+      }
+    } catch (error) {
+      alert('An error occurred while deleting the commitment');
+    }
+  };
+
+  // Commitment Items functions
+  const handleViewItems = async (commitment) => {
+    setSelectedCommitment(commitment);
+    setShowItemsGrid(true);
+    setShowCreateForm(false);
+    setEditingCommitment(null);
+    await fetchCommitmentItems(commitment.vuid);
+  };
+
+  const fetchCommitmentItems = async (commitmentVuid) => {
+    try {
+      const response = await fetch(`http://localhost:5001/api/commitments/${commitmentVuid}/items`);
+      const data = await response.json();
+      setCommitmentItems(data);
+    } catch (error) {
+      console.error('Error fetching commitment items:', error);
+      setCommitmentItems([]);
+    }
+  };
+
+  const refreshCommitmentData = async (commitmentVuid) => {
+    try {
+      // Refresh commitment data to show updated amount
+      await fetchData();
+      
+      // Update the selected commitment with fresh data
+      const updatedCommitment = await fetch(`http://localhost:5001/api/commitments/${commitmentVuid}`);
+      if (updatedCommitment.ok) {
+        const freshCommitment = await updatedCommitment.json();
+        setSelectedCommitment(freshCommitment);
+      }
+    } catch (error) {
+      console.error('Error refreshing commitment data:', error);
+    }
+  };
+
+  const handleShowItemForm = () => {
+    setShowItemForm(true);
+    setEditingItem(null);
+    setItemFormData({
+      item_number: getNextItemNumber(),  // Auto-generate next sequential number
+      cost_code_vuid: '',
+      cost_type_vuid: '',
+      description: '',
+      unit_of_measure: '',
+      quantity: '',
+      unit_price: '',
+      retainage: selectedCommitment?.retainage || '',  // Auto-populate from commitment
+      notes: '',
+      status: 'active'
+    });
+    setCostCodeSearchTerm('');
+    setCostTypeSearchTerm('');
+    setItemErrors({});
+  };
+
+  const handleCancelItemForm = () => {
+    setShowItemForm(false);
+    setEditingItem(null);
+    setItemFormData({
+      item_number: getNextItemNumber(),  // Auto-generate next sequential number
+      cost_code_vuid: '',
+      cost_type_vuid: '',
+      description: '',
+      unit_of_measure: '',
+      quantity: '',
+      unit_price: '',
+      retainage: selectedCommitment?.retainage || '',  // Auto-populate from commitment
+      notes: '',
+      status: 'active'
+    });
+    setCostCodeSearchTerm('');
+    setCostTypeSearchTerm('');
+    setItemErrors({});
+  };
+
+  const handleAddNewItem = () => {
+    // Reset form for a new item
+    setItemFormData({
+      item_number: getNextItemNumber(),  // Auto-generate next sequential number
+      cost_code_vuid: '',
+      cost_type_vuid: '',
+      description: '',
+      unit_of_measure: '',
+      quantity: '',
+      unit_price: '',
+      retainage: selectedCommitment?.retainage || '',  // Auto-populate from commitment
+      notes: '',
+      status: 'active'
+    });
+    setCostCodeSearchTerm('');
+    setCostTypeSearchTerm('');
+    setItemErrors({});
+    setShowItemForm(true);
+  };
+
+  const handleItemSubmit = async (e) => {
+    e.preventDefault();
+    setItemErrors({});
+
+    try {
+      const url = editingItem 
+        ? `http://localhost:5001/api/commitment-items/${editingItem.vuid}`
+        : 'http://localhost:5001/api/commitment-items';
+      
+      const method = editingItem ? 'PUT' : 'POST';
+      
+      const payload = {
+        ...itemFormData,
+        commitment_vuid: selectedCommitment.vuid
+      };
+      
+      const response = await fetch(url, {
+        method,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (response.ok) {
+        const savedItem = await response.json();
+        
+        if (editingItem) {
+          setCommitmentItems(items => items.map(item => 
+            item.vuid === editingItem.vuid ? savedItem : item
+          ));
+        } else {
+          setCommitmentItems(items => [...items, savedItem]);
+        }
+        
+        // After saving, automatically prepare for the next item
+        // Calculate next item number based on the saved item and current items
+        let nextItemNumber;
+        if (editingItem) {
+          // If editing, the item number stays the same, so we need to find the next available
+          const allItemNumbers = commitmentItems
+            .map(item => parseInt(item.item_number, 10))
+            .filter(num => !isNaN(num));
+          const highestNumber = allItemNumbers.length > 0 ? Math.max(...allItemNumbers) : 0;
+          nextItemNumber = String(highestNumber + 1).padStart(4, '0');
+        } else {
+          // For new items, increment from the saved item's number
+          const savedItemNumber = parseInt(savedItem.item_number, 10);
+          if (!isNaN(savedItemNumber)) {
+            nextItemNumber = String(savedItemNumber + 1).padStart(4, '0');
+          } else {
+            // Fallback: find highest existing number and increment
+            const itemNumbers = commitmentItems
+              .map(item => parseInt(item.item_number, 10))
+              .filter(num => !isNaN(num));
+            const highestNumber = itemNumbers.length > 0 ? Math.max(...itemNumbers) : 0;
+            nextItemNumber = String(highestNumber + 1).padStart(4, '0');
+          }
+        }
+        
+        setItemFormData({
+          item_number: nextItemNumber,
+          cost_code_vuid: '',
+          cost_type_vuid: '',
+          description: '',
+          unit_of_measure: '',
+          quantity: '',
+          unit_price: '',
+          retainage: selectedCommitment?.retainage || '',
+          notes: '',
+          status: 'active'
+        });
+        setCostCodeSearchTerm('');
+        setCostTypeSearchTerm('');
+        setItemErrors({});
+        
+        // Keep the form open for the next item
+        setShowItemForm(true);
+        
+        await fetchCommitmentItems(selectedCommitment.vuid);
+        
+        // Refresh commitment data to show updated amount
+        await refreshCommitmentData(selectedCommitment.vuid);
+        
+        // Don't automatically close the form - let user continue adding items or manually save
+      } else {
+        const errorData = await response.json();
+        setItemErrors({ submit: errorData.error || 'An error occurred' });
+      }
+    } catch (error) {
+      setItemErrors({ submit: 'An error occurred while saving the item' });
+    }
+  };
+
+  const handleEditItem = (item) => {
+    setEditingItem(item);
+    setShowItemForm(true);
+    setItemFormData({
+      item_number: item.item_number,
+      cost_code_vuid: item.cost_code_vuid || '',
+      cost_type_vuid: item.cost_type_vuid || '',
+      description: item.description,
+      unit_of_measure: item.unit_of_measure || '',
+      quantity: item.quantity,
+      unit_price: item.unit_price,
+      retainage: item.retainage || '',
+      notes: item.notes || '',
+      status: item.status
+    });
+    // Set search terms to display current selections
+    const costCodeName = item.cost_code_vuid ? getCostCodeName(item.cost_code_vuid) : '';
+    const costTypeName = item.cost_type_vuid ? getCostTypeName(item.cost_type_vuid) : '';
+    setCostCodeSearchTerm(costCodeName || '');
+    setCostTypeSearchTerm(costTypeName || '');
+    setItemErrors({});
+  };
+
+  const handleDeleteItem = async (vuid) => {
+    if (!window.confirm('Are you sure you want to delete this item?')) {
+      return;
+    }
+
+    try {
+      const response = await fetch(`http://localhost:5001/api/commitment-items/${vuid}`, {
+        method: 'DELETE',
+      });
+
+      if (response.ok) {
+        setCommitmentItems(items => items.filter(item => item.vuid !== vuid));
+        await fetchCommitmentItems(selectedCommitment.vuid);
+        
+        // Refresh commitment data to show updated amount
+        await refreshCommitmentData(selectedCommitment.vuid);
+      } else {
+        alert('Failed to delete item');
+      }
+    } catch (error) {
+      alert('An error occurred while deleting the item');
+    }
+  };
+
+  const handleDoneAddingItems = async () => {
+    // Check if there's a current item in the form that needs to be saved
+    if (itemFormData.description && itemFormData.quantity && itemFormData.unit_price) {
+      // There's a valid item to save, so save it first
+      try {
+        const payload = {
+          commitment_vuid: selectedCommitment.vuid,
+          item_number: itemFormData.item_number,
+          cost_code_vuid: itemFormData.cost_code_vuid || null,
+          cost_type_vuid: itemFormData.cost_type_vuid || null,
+          description: itemFormData.description,
+          unit_of_measure: itemFormData.unit_of_measure || null,
+          quantity: itemFormData.quantity,
+          unit_price: itemFormData.unit_price,
+          retainage: itemFormData.retainage || null,
+          notes: itemFormData.notes || null,
+          status: itemFormData.status || 'active'
+        };
+
+        const url = editingItem 
+          ? `http://localhost:5001/api/commitment-items/${editingItem.vuid}`
+          : 'http://localhost:5001/api/commitment-items';
+
+        const method = editingItem ? 'PUT' : 'POST';
+
+        const response = await fetch(url, {
+          method,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify(payload),
+        });
+
+        if (response.ok) {
+          // Item saved successfully, now close the form
+          await fetchCommitmentItems(selectedCommitment.vuid);
+          await refreshCommitmentData(selectedCommitment.vuid);
+        } else {
+          const errorData = await response.json();
+          alert(`Failed to save item: ${errorData.error || 'An error occurred'}`);
+          return; // Don't close if save failed
+        }
+      } catch (error) {
+        alert('An error occurred while saving the item');
+        return; // Don't close if save failed
+      }
+    }
+
+    // Close the form and reset
+    setShowItemForm(false);
+    setEditingItem(null);
+    setItemFormData({
+      item_number: getNextItemNumber(),
+      cost_code_vuid: '',
+      cost_type_vuid: '',
+      description: '',
+      unit_of_measure: '',
+      quantity: '',
+      unit_price: '',
+      retainage: selectedCommitment?.retainage || '',
+      notes: '',
+      status: 'active'
+    });
+    setCostCodeSearchTerm('');
+    setCostTypeSearchTerm('');
+    setItemErrors({});
+  };
+
+  const handleItemInputChange = (e) => {
+    const { name, value } = e.target;
+    
+    setItemFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+    
+    // Clear error when user starts typing
+    if (itemErrors[name]) {
+      setItemErrors(prev => ({
+        ...prev,
+        [name]: ''
+      }));
+    }
+  };
+
+  const getCostCodeName = (costCodeVuid) => {
+    if (!costCodeVuid || !costCodes || costCodes.length === 0) return '';
+    const costCode = costCodes.find(c => c.vuid === costCodeVuid);
+    return costCode && costCode.code && costCode.description 
+      ? `${costCode.code} - ${costCode.description}` 
+      : 'Unknown Cost Code';
+  };
+
+  const getCostTypeName = (costTypeVuid) => {
+    if (!costTypeVuid || !costTypes || costTypes.length === 0) return '';
+    const costType = costTypes.find(c => c.vuid === costTypeVuid);
+    return costType && costType.cost_type ? costType.cost_type : 'Unknown Cost Type';
+  };
+
+  const closeItemsGrid = () => {
+    setShowItemsGrid(false);
+    setSelectedCommitment(null);
+    setCommitmentItems([]);
+    setShowItemForm(false);
+    setEditingItem(null);
+    
+    // If this was a new commitment created from Project Details, also close the create form and return to normal view
+    if (location.search.includes('create=true')) {
+      setShowCreateForm(false);
+      // Clear the query parameters by navigating to the base URL
+      window.history.replaceState({}, document.title, '/commitments');
+    }
+  };
+
+  const handleSaveCommitment = () => {
+    // Close the items grid and return to normal commitment view
+    setShowItemsGrid(false);
+    setSelectedCommitment(null);
+    setCommitmentItems([]);
+    setShowItemForm(false);
+    setEditingItem(null);
+    
+    // If this was a new commitment created from Project Details, also close the create form and return to normal view
+    if (location.search.includes('create=true')) {
+      setShowCreateForm(false);
+      // Clear the query parameters by navigating to the base URL
+      window.history.replaceState({}, document.title, '/commitments');
+    }
+  };
+
+  const handleInputChange = (e) => {
+    const { name, value, type, checked } = e.target;
+    
+    setFormData(prev => ({
+      ...prev,
+      [name]: type === 'checkbox' ? checked : value
+    }));
+    
+    // Clear error when user starts typing
+    if (errors[name]) {
+      setErrors(prev => ({
+        ...prev,
+        [name]: ''
+      }));
+    }
+  };
+
+  const formatDate = (dateString) => {
+    if (!dateString) return 'N/A';
+    return new Date(dateString).toLocaleDateString('en-US', {
+      year: 'numeric',
+      month: 'short',
+      day: 'numeric'
+    });
+  };
+
+  const formatCurrency = (amount) => {
+    if (!amount) return '$0.00';
+    return new Intl.NumberFormat('en-US', {
+      style: 'currency',
+      currency: 'USD'
+    }).format(amount);
+  };
+
+  const getProjectName = (projectVuid) => {
+    const project = projects.find(p => p.vuid === projectVuid);
+    return project ? project.project_name : 'Unknown Project';
+  };
+
+
+
+  const getVendorName = (vendorVuid) => {
+    const vendor = vendors.find(v => v.vuid === vendorVuid);
+    return vendor ? vendor.vendor_name : 'Unknown Vendor';
+  };
+
+  // Integration functions
+  const fetchIntegrations = async () => {
+    try {
+      const baseURL = 'http://localhost:5001';
+      const response = await fetch(`${baseURL}/api/integrations`);
+      const data = await response.json();
+      setIntegrations(data);
+    } catch (error) {
+      console.error('Error fetching integrations:', error);
+    }
+  };
+
+  const handleRetrieveModal = () => {
+    setRetrieveIntegration(null);
+    setShowRetrieveModal(true);
+    fetchIntegrations();
+  };
+
+  const handleRetrieveCommitments = async () => {
+    if (!retrieveIntegration) {
+      alert('Please select an integration');
+      return;
+    }
+
+    try {
+      // Here you would implement the logic to retrieve commitments from the selected integration
+      console.log(`Retrieving commitments from integration ${retrieveIntegration.integration_name}`);
+      
+      // For now, just show a success message
+      alert(`Commitments retrieved from ${retrieveIntegration.integration_name} successfully!`);
+      
+      // Close the modal
+      setShowRetrieveModal(false);
+      setRetrieveIntegration(null);
+    } catch (error) {
+      console.error('Error retrieving commitments from integration:', error);
+      alert('Error retrieving commitments from integration');
+    }
+  };
+
+  const getNextCommitmentNumber = () => {
+    console.log('getNextCommitmentNumber called, commitments length:', commitments.length);
+    console.log('Current commitments:', commitments);
+    
+    // If commitments haven't been loaded yet, return a default
+    if (commitments.length === 0) {
+      console.log('Commitments not loaded yet, returning PO-001');
+      return 'PO-001';
+    }
+    
+    try {
+      // Get all commitment numbers and extract numeric parts
+      const commitmentNumbers = commitments
+        .map(c => c.commitment_number)
+        .filter(num => num && num.trim() !== '')
+        .map(num => {
+          // Try different patterns: PO-001, PO001, PO-1, etc.
+          const patterns = [
+            /PO-(\d+)/i,      // PO-001, PO-1
+            /PO(\d+)/i,       // PO001, PO1
+            /(\d+)/           // Just numbers
+          ];
+          
+          for (const pattern of patterns) {
+            const match = num.match(pattern);
+            if (match) {
+              return parseInt(match[1], 10);
+            }
+          }
+          return 0;
+        })
+        .filter(num => !isNaN(num) && num > 0)
+        .sort((a, b) => a - b);
+      
+      console.log('Extracted commitment numbers:', commitmentNumbers);
+      
+      if (commitmentNumbers.length === 0) {
+        console.log('No existing numbers found, returning PO-001');
+        return 'PO-001';
+      }
+      
+      // Find the first gap in the sequence, or use the next number after the highest
+      let nextNumber = 1;
+      for (const num of commitmentNumbers) {
+        if (num === nextNumber) {
+          nextNumber++;
+        } else {
+          break; // Found a gap, use this number
+        }
+      }
+      
+      const result = `PO-${String(nextNumber).padStart(3, '0')}`;
+      console.log('Generated next commitment number:', result);
+      return result;
+    } catch (error) {
+      console.error('Error generating commitment number:', error);
+      return 'PO-001';
+    }
+  };
+
+  const getNextItemNumber = () => {
+    if (!selectedCommitment || !commitmentItems.length) {
+      return '0001';
+    }
+    
+    try {
+      // Get all item numbers and find the highest one
+      const itemNumbers = commitmentItems
+        .map(item => parseInt(item.item_number, 10))
+        .filter(num => !isNaN(num));
+      
+      if (itemNumbers.length === 0) {
+        return '0001';
+      }
+      
+      // Get the next number after the highest existing number
+      const highestNumber = Math.max(...itemNumbers);
+      const nextNumber = highestNumber + 1;
+      
+      // Format as 4-digit string with leading zeros
+      return String(nextNumber).padStart(4, '0');
+    } catch (error) {
+      console.error('Error generating item number:', error);
+      return '0001';
+    }
+  };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-gray-50 to-amber-50 flex items-center justify-center">
+        <div className="text-2xl font-semibold text-gray-700">Loading commitments...</div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-gradient-to-br from-gray-100 to-amber-50 p-8">
+      <div className="max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="text-center mb-12">
+          <h1 className="text-5xl font-bold text-gray-900 mb-4 font-sans">
+            Commitments
+          </h1>
+          <p className="text-xl text-gray-700 font-light">
+            Manage purchase orders, subcontracts, and other project commitments
+          </p>
+        </div>
+
+        {/* Action Buttons */}
+        <div className="text-center mb-8 space-y-4">
+          <div className="flex justify-center space-x-4">
+            <button
+              onClick={showCreateForm ? handleCancelEdit : handleShowCreateForm}
+              className="bg-gray-800 hover:bg-gray-900 text-white font-semibold py-4 px-8 rounded-lg text-lg transition-all duration-200 transform hover:scale-105 shadow-lg"
+            >
+              {showCreateForm ? 'Cancel' : '+ Create New Commitment'}
+            </button>
+            <button
+              onClick={handleRetrieveModal}
+              className="bg-gray-800 hover:bg-gray-900 text-white font-semibold py-4 px-8 rounded-lg text-lg transition-all duration-200 transform hover:scale-105 shadow-lg"
+            >
+              <svg className="w-6 h-6 inline mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+              </svg>
+              Retrieve Commitments
+            </button>
+          </div>
+        </div>
+
+        {/* Create/Edit Form */}
+        {(showCreateForm || editingCommitment) && (
+          <div className="bg-white rounded-xl shadow-2xl p-8 mb-12 border border-gray-200">
+            <h2 className="text-3xl font-bold text-gray-900 mb-6 text-center">
+              {editingCommitment ? 'Edit Commitment' : 'Create New Commitment'}
+            </h2>
+            
+            <form onSubmit={handleSubmit} className="space-y-6">
+              {errors.submit && (
+                <div className="bg-red-50 border border-red-200 rounded-lg p-4">
+                  <p className="text-red-600 font-medium">{errors.submit}</p>
+                </div>
+              )}
+              
+              {/* Basic Information */}
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div>
+                  <label htmlFor="commitment_number" className="block text-lg font-semibold text-gray-900 mb-2">
+                    Commitment Number * (Pre-filled)
+                  </label>
+                  <input
+                    type="text"
+                    id="commitment_number"
+                    name="commitment_number"
+                    value={formData.commitment_number}
+                    onChange={handleInputChange}
+                    className={`w-full px-4 py-3 border-2 rounded-lg text-lg font-medium focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent transition-all ${
+                      errors.commitment_number ? 'border-red-300' : 'border-gray-300'
+                    }`}
+                    placeholder="e.g., PO-001"
+                  />
+                  {errors.commitment_number && (
+                    <p className="mt-2 text-red-600 font-medium">{errors.commitment_number}</p>
+                  )}
+                </div>
+
+                <div className="dropdown-container relative">
+                  <label className="block text-lg font-semibold text-gray-900 mb-2">
+                    Project *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setProjectDropdownOpen(!projectDropdownOpen)}
+                    className={`w-full px-4 py-3 border-2 rounded-lg text-lg font-medium focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent transition-all text-left bg-white ${
+                      errors.project_vuid ? 'border-red-300' : 'border-gray-300'
+                    }`}
+                  >
+                    {formData.project_vuid ? getProjectName(formData.project_vuid) : 'Select Project'}
+                  </button>
+                  {errors.project_vuid && (
+                    <p className="mt-2 text-red-600 font-medium">{errors.project_vuid}</p>
+                  )}
+                  {projectDropdownOpen && (
+                    <div className="absolute z-10 w-full mt-1 bg-white border-2 border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                      {projects.map((project) => (
+                        <div
+                          key={project.vuid}
+                          onClick={() => {
+                            setFormData(prev => ({ ...prev, project_vuid: project.vuid }));
+                            setProjectDropdownOpen(false);
+                          }}
+                          className="px-4 py-3 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
+                        >
+                          <div className="font-medium text-gray-900">{project.project_name}</div>
+                          <div className="text-sm text-gray-600">{project.project_number}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+
+                <div className="dropdown-container relative">
+                  <label className="block text-lg font-semibold text-gray-900 mb-2">
+                    Vendor *
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setVendorDropdownOpen(!vendorDropdownOpen)}
+                    className="w-full px-4 py-3 border-2 rounded-lg text-lg font-medium focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent transition-all border-gray-300 text-left bg-white"
+                  >
+                    {formData.vendor_vuid ? getVendorName(formData.vendor_vuid) : 'Select Vendor'}
+                  </button>
+                  {vendorDropdownOpen && (
+                    <div className="absolute z-10 w-full mt-1 bg-white border-2 border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                      {vendors.map((vendor) => (
+                        <div
+                          key={vendor.vuid}
+                          onClick={() => {
+                            setFormData(prev => ({ ...prev, vendor_vuid: vendor.vuid }));
+                            setVendorDropdownOpen(false);
+                          }}
+                          className="px-4 py-3 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
+                        >
+                          <div className="font-medium text-gray-900">{vendor.vendor_name}</div>
+                          <div className="text-sm text-gray-600">{vendor.company_name}</div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Commitment Details */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label htmlFor="commitment_name" className="block text-lg font-semibold text-gray-900 mb-2">
+                    Commitment Name *
+                  </label>
+                  <input
+                    type="text"
+                    id="commitment_name"
+                    name="commitment_name"
+                    value={formData.commitment_name}
+                    onChange={handleInputChange}
+                    className={`w-full px-4 py-3 border-2 rounded-lg text-lg font-medium focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent transition-all ${
+                      errors.commitment_name ? 'border-red-300' : 'border-gray-300'
+                    }`}
+                    placeholder="Enter commitment name..."
+                  />
+                  {errors.commitment_name && (
+                    <p className="mt-2 text-red-600 font-medium">{errors.commitment_name}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label htmlFor="commitment_date" className="block text-lg font-semibold text-gray-900 mb-2">
+                    Commitment Date *
+                  </label>
+                  <input
+                    type="date"
+                    id="commitment_date"
+                    name="commitment_date"
+                    value={formData.commitment_date}
+                    onChange={handleInputChange}
+                    className="w-full px-4 py-3 border-2 rounded-lg text-lg font-medium focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent transition-all border-gray-300"
+                  />
+                </div>
+              </div>
+
+              {/* Description and Notes */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div>
+                  <label htmlFor="description" className="block text-lg font-semibold text-gray-900 mb-2">
+                    Description
+                  </label>
+                  <textarea
+                    id="description"
+                    name="description"
+                    value={formData.description}
+                    onChange={handleInputChange}
+                    rows="3"
+                    className={`w-full px-4 py-3 border-2 rounded-lg text-lg font-medium focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent transition-all ${
+                      errors.description ? 'border-red-300' : 'border-gray-300'
+                    }`}
+                    placeholder="Describe the commitment..."
+                  />
+                  {errors.description && (
+                    <p className="mt-2 text-red-600 font-medium">{errors.description}</p>
+                  )}
+                </div>
+
+                <div>
+                  <label htmlFor="notes" className="block text-lg font-semibold text-gray-900 mb-2">
+                    Notes
+                  </label>
+                  <textarea
+                    id="notes"
+                    name="notes"
+                    value={formData.notes}
+                    onChange={handleInputChange}
+                    rows="3"
+                    className="w-full px-4 py-3 border-2 rounded-lg text-lg font-medium focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent transition-all border-gray-300"
+                    placeholder="Additional notes..."
+                  />
+                </div>
+              </div>
+
+              {/* Status */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="dropdown-container relative">
+                  <label className="block text-lg font-semibold text-gray-900 mb-2">
+                    Status
+                  </label>
+                  <button
+                    type="button"
+                    onClick={() => setFormStatusDropdownOpen(!formStatusDropdownOpen)}
+                    className="w-full px-4 py-3 border-2 rounded-lg text-lg font-medium focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent transition-all border-gray-300 text-left bg-white"
+                  >
+                    {formData.status || 'Select Status'}
+                  </button>
+                  {formStatusDropdownOpen && (
+                    <div className="absolute z-10 w-full mt-1 bg-white border-2 border-gray-300 rounded-lg shadow-lg">
+                      {['active', 'completed', 'cancelled', 'pending'].map((status) => (
+                        <div
+                          key={status}
+                          onClick={() => {
+                            setFormData(prev => ({ ...prev, status }));
+                            setFormStatusDropdownOpen(false);
+                          }}
+                          className="px-4 py-3 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0 capitalize"
+                        >
+                          {status}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Form Buttons */}
+              <div className="text-center pt-6">
+                <div className="flex justify-center space-x-4">
+                  <button
+                    type="submit"
+                    className="bg-gray-800 hover:bg-gray-900 text-white font-semibold py-4 px-12 rounded-lg text-lg transition-all duration-200 transform hover:scale-105 shadow-lg"
+                  >
+                    {editingCommitment ? 'Update Commitment' : 'Create Commitment'}
+                  </button>
+                  {editingCommitment && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEditingCommitment(null);
+                        setFormData({
+                          commitment_number: '',
+                          project_vuid: '',
+                          vendor_vuid: '',
+                          commitment_name: '',
+                          commitment_date: '',
+                          description: '',
+                          status: 'active',
+                          notes: ''
+                        });
+                        setErrors({});
+                      }}
+                      className="bg-gray-300 hover:bg-gray-400 text-gray-700 font-semibold py-4 px-12 rounded-lg text-lg transition-all duration-200 transform hover:scale-105 shadow-lg"
+                    >
+                      Cancel
+                    </button>
+                  )}
+                </div>
+              </div>
+            </form>
+          </div>
+        )}
+
+        {/* Search and Filters - Only show when not editing/creating and not viewing items */}
+        {!showCreateForm && !editingCommitment && !showItemsGrid && (
+          <div className="bg-white rounded-xl shadow-lg p-6 mb-8">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-6">
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Search</label>
+              <input
+                type="text"
+                placeholder="Search commitments..."
+                value={searchTerm}
+                onChange={(e) => setSearchTerm(e.target.value)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent"
+              />
+            </div>
+
+            <div className="dropdown-container relative">
+              <label className="block text-sm font-semibold text-gray-700 mb-2">Status</label>
+              <button
+                onClick={() => setStatusDropdownOpen(!statusDropdownOpen)}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg text-left bg-white focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent"
+              >
+                {statusFilter === 'all' ? 'All Statuses' : statusFilter}
+              </button>
+              {statusDropdownOpen && (
+                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg">
+                  <div
+                    onClick={() => {
+                      setStatusFilter('all');
+                      setStatusDropdownOpen(false);
+                    }}
+                    className="px-4 py-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100"
+                  >
+                    All Statuses
+                  </div>
+                  {['active', 'completed', 'cancelled', 'pending'].map((status) => (
+                    <div
+                      key={status}
+                      onClick={() => {
+                        setStatusFilter(status);
+                        setStatusDropdownOpen(false);
+                      }}
+                      className="px-4 py-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0 capitalize"
+                    >
+                      {status}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+
+
+            <div className="dropdown-container relative">
+              <div className="flex items-center justify-between mb-2">
+                <label className="block text-sm font-semibold text-gray-700">Filter by Project</label>
+                {projectSearchTerm && (
+                  <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                    Filter Active
+                  </span>
+                )}
+              </div>
+              <input
+                type="text"
+                placeholder="Search projects..."
+                value={projectDisplayValue}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setProjectDisplayValue(value);
+                  // Clear the VUID filter when user types
+                  setProjectSearchTerm('');
+                }}
+                onFocus={() => {
+                  setProjectDropdownOpen(true);
+                  setProjectSearchTerm(''); // Reset VUID filter when opening dropdown
+                  setProjectDisplayValue(''); // Reset display value when opening dropdown
+                }}
+                onBlur={() => {
+                  // Delay closing to allow for clicks on dropdown items
+                  setTimeout(() => setProjectDropdownOpen(false), 200);
+                }}
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent"
+              />
+              {projectDropdownOpen && (
+                <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                  {projects
+                    .filter(project => 
+                      projectSearchTerm === '' ||
+                      (project.project_number && project.project_number.toLowerCase().includes((projectSearchTerm || '').toLowerCase())) ||
+                      (project.project_name && project.project_name.toLowerCase().includes((projectSearchTerm || '').toLowerCase()))
+                    )
+                    .map((project) => (
+                      <div
+                        key={project.vuid}
+                        onClick={() => {
+                          setProjectSearchTerm(project.vuid);
+                          setProjectDisplayValue(`${project.project_number} - ${project.project_name}`);
+                          setProjectDropdownOpen(false);
+                        }}
+                        className="px-4 py-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
+                      >
+                        <div className="font-medium text-gray-900">{project.project_number}</div>
+                        <div className="text-sm text-gray-600">{project.project_name}</div>
+                      </div>
+                    ))}
+                  {projects.filter(project => 
+                    projectSearchTerm === '' ||
+                    (project.project_number && project.project_number.toLowerCase().includes((projectSearchTerm || '').toLowerCase())) ||
+                    (project.project_name && project.project_name.toLowerCase().includes((projectSearchTerm || '').toLowerCase()))
+                  ).length === 0 && projectSearchTerm && (
+                    <div className="px-4 py-2 text-gray-500 text-sm">
+                      No projects found
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+
+            <div className="flex items-end">
+              <button
+                onClick={() => {
+                  setSearchTerm('');
+                  setStatusFilter('all');
+
+                  setProjectSearchTerm('');
+                  setProjectDisplayValue('');
+                }}
+                className="w-full px-4 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 font-medium rounded-lg transition-colors"
+              >
+                Clear Filters
+              </button>
+            </div>
+          </div>
+        </div>
+        )}
+
+        {/* Commitments List - Only show when not editing/creating and not viewing items */}
+        {!showCreateForm && !editingCommitment && !showItemsGrid && (
+          <div className="bg-white rounded-xl shadow-lg p-6">
+            {/* Filter Summary */}
+                            {(searchTerm || statusFilter !== 'all' || projectSearchTerm) && (
+              <div className="mb-6 p-4 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center space-x-2">
+                    <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.207A1 1 0 013 6.5V4z" />
+                    </svg>
+                    <span className="text-blue-800 font-medium">Active Filters:</span>
+                  </div>
+                  <span className="text-blue-600 text-sm">
+                    Showing {filteredCommitments.length} of {commitments.length} commitments
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  {searchTerm && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                      Search: "{searchTerm}"
+                    </span>
+                  )}
+                  {statusFilter !== 'all' && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                      Status: {statusFilter}
+                    </span>
+                  )}
+
+                  {projectSearchTerm && (
+                    <span className="inline-flex items-center px-2 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                      Project: {projectSearchTerm}
+                    </span>
+                  )}
+                </div>
+              </div>
+            )}
+            
+            {filteredCommitments.length === 0 ? (
+            <div className="text-center py-12">
+              <div className="text-gray-400 text-6xl mb-4">📋</div>
+              <h3 className="text-xl font-semibold text-gray-600 mb-2">No commitments found</h3>
+              <p className="text-gray-500">
+                {searchTerm || statusFilter !== 'all' 
+                  ? 'Try adjusting your search or filters'
+                  : 'Create your first commitment to get started'
+                }
+              </p>
+            </div>
+          ) : (
+            <>
+              <div className="grid gap-6">
+                {getCurrentCommitments().map((commitment) => (
+                  <div key={commitment.vuid} className="bg-gray-50 rounded-lg p-6 border border-gray-200 hover:border-gray-300 transition-colors">
+                    <div className="flex items-start justify-between mb-4">
+                      <div className="flex-1">
+                        <div className="flex items-center space-x-3 mb-2">
+                          <h3 className="text-xl font-bold text-gray-900">{commitment.commitment_number}</h3>
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            commitment.status === 'active' ? 'bg-green-100 text-green-800' : 
+                            commitment.status === 'completed' ? 'bg-blue-100 text-blue-800' : 
+                            commitment.status === 'cancelled' ? 'bg-red-100 text-red-800' : 'bg-gray-100 text-gray-800'
+                          }`}>
+                            {commitment.status}
+                          </span>
+
+                        </div>
+                        <p className="text-lg text-gray-700 mb-2">{commitment.description || 'No description'}</p>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm">
+                          <div>
+                            <span className="font-medium text-gray-600">Name:</span>
+                            <p className="text-gray-900">{commitment.commitment_name}</p>
+                          </div>
+                          <div>
+                            <span className="font-medium text-gray-600">Project:</span>
+                            <p className="text-gray-900">{getProjectName(commitment.project_vuid)}</p>
+                          </div>
+                          <div>
+                            <span className="font-medium text-gray-600">Vendor:</span>
+                            <p className="text-gray-900">{getVendorName(commitment.vendor_vuid)}</p>
+                          </div>
+                          <div>
+                            <span className="font-medium text-gray-600">Total Amount:</span>
+                            <p className="text-gray-900 font-semibold">{formatCurrency(commitment.original_amount || 0)}</p>
+                          </div>
+                        </div>
+                        <div className="grid grid-cols-2 md:grid-cols-4 gap-4 text-sm mt-2">
+                          <div>
+                            <span className="font-medium text-gray-600">Date:</span>
+                            <p className="text-gray-900">{formatDate(commitment.commitment_date)}</p>
+                          </div>
+                          <div>
+                            <span className="font-medium text-gray-600">Status:</span>
+                            <p className="text-gray-900">{commitment.status}</p>
+                          </div>
+                          <div>
+                            <span className="font-medium text-gray-600">Notes:</span>
+                            <p className="text-gray-900">{commitment.notes || 'No notes'}</p>
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center space-x-3 ml-4">
+                        <button
+                          onClick={() => handleViewItems(commitment)}
+                          className="text-green-500 hover:text-green-700 p-2 hover:bg-green-50 rounded-lg transition-colors"
+                          title="View commitment items"
+                        >
+                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v10a2 2 0 002 2h8a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => handleEdit(commitment)}
+                          className="text-blue-500 hover:text-blue-700 p-2 hover:bg-blue-50 rounded-lg transition-colors"
+                          title="Edit commitment"
+                        >
+                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                          </svg>
+                        </button>
+                        <button
+                          onClick={() => handleDelete(commitment.vuid)}
+                          className="text-red-500 hover:text-red-700 p-2 hover:bg-red-50 rounded-lg transition-colors"
+                          title="Delete commitment"
+                        >
+                          <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                          </svg>
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+
+              {/* Pagination */}
+              {filteredCommitments.length > commitmentsPerPage && (
+                <div className="flex items-center justify-center space-x-2 mt-8">
+                  <button
+                    onClick={() => paginate(currentPage - 1)}
+                    disabled={currentPage === 1}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Previous
+                  </button>
+                  
+                  {Array.from({ length: Math.ceil(filteredCommitments.length / commitmentsPerPage) }, (_, i) => (
+                    <button
+                      key={i + 1}
+                      onClick={() => paginate(i + 1)}
+                      className={`px-3 py-2 border rounded-lg ${
+                        currentPage === i + 1
+                          ? 'bg-gray-800 text-white border-gray-800'
+                          : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                      }`}
+                    >
+                      {i + 1}
+                    </button>
+                  ))}
+                  
+                  <button
+                    onClick={() => paginate(currentPage + 1)}
+                    disabled={currentPage === Math.ceil(filteredCommitments.length / commitmentsPerPage)}
+                    className="px-3 py-2 border border-gray-300 rounded-lg text-gray-700 hover:bg-gray-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
+
+              {/* Results Count */}
+              <div className="text-center mt-4 text-gray-600">
+                Showing {Math.min((currentPage - 1) * commitmentsPerPage + 1, filteredCommitments.length)} to {Math.min(currentPage * commitmentsPerPage, filteredCommitments.length)} of {filteredCommitments.length} commitments
+              </div>
+            </>
+          )}
+        </div>
+        )}
+
+        {/* Commitment Items Grid */}
+        {showItemsGrid && selectedCommitment && (
+          <div className="bg-white rounded-xl shadow-2xl p-8 mb-12 border border-gray-200">
+            <h2 className="text-3xl font-bold text-gray-900 mb-6 text-center">
+              Commitment Items Entry - Excel Style
+            </h2>
+            
+            {/* Success Message */}
+            {successMessage && (
+              <div className="mb-6 bg-green-50 border border-green-200 rounded-lg p-4">
+                <p className="text-green-600 font-medium">{successMessage}</p>
+              </div>
+            )}
+            
+            <div className="mb-6">
+              <p className="text-gray-600 text-center">
+                Use Tab to navigate between fields, Enter to add a new line, and start typing in dropdowns to search
+              </p>
+            </div>
+
+            {/* Excel-style grid */}
+            <div className="overflow-x-auto">
+              <table className="min-w-max border border-gray-300" style={{ position: 'relative' }}>
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold text-gray-900 whitespace-nowrap">Item # *</th>
+                    <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold text-gray-900 whitespace-nowrap">Cost Code</th>
+                    <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold text-gray-900 whitespace-nowrap">Cost Type</th>
+                    <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold text-gray-900">Description *</th>
+                    <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold text-gray-900 whitespace-nowrap">Unit of Measure</th>
+                    <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold text-gray-900 whitespace-nowrap">Quantity</th>
+                    <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold text-gray-900 whitespace-nowrap">Unit Price</th>
+                    <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold text-gray-900 whitespace-nowrap">Total Amount *</th>
+                    <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold text-gray-900">Notes</th>
+                    <th className="border border-gray-300 px-4 py-3 text-left text-sm font-semibold text-gray-900 whitespace-nowrap">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {commitmentItems.map((item, index) => (
+                    <tr key={item.vuid || index} className="hover:bg-gray-50">
+                      <td className="border border-gray-300 px-4 py-2">
+                        <input
+                          type="text"
+                          value={item.item_number || ''}
+                          onChange={(e) => {
+                            const newItems = [...commitmentItems];
+                            newItems[index] = { ...newItems[index], item_number: e.target.value };
+                            setCommitmentItems(newItems);
+                          }}
+                          className="w-full px-2 py-1 border-0 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                          placeholder="Item #"
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') {
+                              e.preventDefault();
+                              handleAddNewItem();
+                            }
+                          }}
+                        />
+                      </td>
+                      <td className="border border-gray-300 px-4 py-2">
+                        <div className="dropdown-container relative">
+                          <input
+                            type="text"
+                            value={costCodes.find(c => c.vuid === item.cost_code_vuid)?.code || ''}
+                            onChange={(e) => {
+                              const newItems = [...commitmentItems];
+                              newItems[index] = { ...newItems[index], cost_code_vuid: e.target.value };
+                              setCommitmentItems(newItems);
+                            }}
+                            onFocus={() => setCostCodeDropdownOpen(index)}
+                            className="w-full px-2 py-1 border-0 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                            placeholder="Type to search..."
+                            readOnly
+                          />
+                          {costCodeDropdownOpen === index && (
+                            <div className="absolute z-[9999] w-[500px] bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-auto" style={{
+                              top: '100%',
+                              left: '0',
+                              marginTop: '2px'
+                            }}>
+                              <input
+                                type="text"
+                                placeholder="Search cost codes..."
+                                className="w-full px-3 py-2 border-b border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                onChange={(e) => {
+                                  const searchTerm = e.target.value.toLowerCase();
+                                  const filtered = costCodes.filter(costCode => 
+                                    costCode.status === 'active' && 
+                                    (costCode.code && costCode.code.toLowerCase().includes(searchTerm) || 
+                                     costCode.description && costCode.description.toLowerCase().includes(searchTerm))
+                                  );
+                                  setFilteredCostCodes(filtered);
+                                }}
+                                autoFocus
+                              />
+                              {costCodes.filter(c => c.status === 'active').map((costCode) => (
+                                <div
+                                  key={costCode.vuid}
+                                  onClick={() => {
+                                    const newItems = [...commitmentItems];
+                                    newItems[index] = { ...newItems[index], cost_code_vuid: costCode.vuid };
+                                    setCommitmentItems(newItems);
+                                    setCostCodeDropdownOpen(null);
+                                  }}
+                                  className="px-3 py-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
+                                >
+                                  <div className="font-medium text-gray-900">{costCode.code}</div>
+                                  <div className="text-sm text-gray-600">{costCode.description}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="border border-gray-300 px-4 py-2">
+                        <div className="dropdown-container relative">
+                          <input
+                            type="text"
+                            value={costTypes.find(c => c.vuid === item.cost_type_vuid)?.cost_type || ''}
+                            onChange={(e) => {
+                              const newItems = [...commitmentItems];
+                              newItems[index] = { ...newItems[index], cost_type_vuid: e.target.value };
+                              setCommitmentItems(newItems);
+                            }}
+                            onFocus={() => setCostTypeDropdownOpen(index)}
+                            className="w-full px-2 py-1 border-0 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                            placeholder="Type to search..."
+                            readOnly
+                          />
+                          {costTypeDropdownOpen === index && (
+                            <div className="absolute z-[9999] w-[500px] bg-white border border-gray-300 rounded-md shadow-lg max-h-60 overflow-auto" style={{
+                              top: '100%',
+                              left: '0',
+                              marginTop: '2px'
+                            }}>
+                              <input
+                                type="text"
+                                placeholder="Search cost types..."
+                                className="w-full px-3 py-2 border-b border-gray-200 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                                onChange={(e) => {
+                                  const searchTerm = e.target.value.toLowerCase();
+                                  const filtered = costTypes.filter(costType => 
+                                    costType.status === 'active' && 
+                                    (costType.cost_type && costType.cost_type.toLowerCase().includes(searchTerm) || 
+                                     costType.description && costType.description.toLowerCase().includes(searchTerm))
+                                  );
+                                  setFilteredCostTypes(filtered);
+                                }}
+                                autoFocus
+                              />
+                              {costTypes.filter(c => c.status === 'active').map((costType) => (
+                                <div
+                                  key={costType.vuid}
+                                  onClick={() => {
+                                    const newItems = [...commitmentItems];
+                                    newItems[index] = { ...newItems[index], cost_type_vuid: costType.vuid };
+                                    setCommitmentItems(newItems);
+                                    setCostTypeDropdownOpen(null);
+                                  }}
+                                  className="px-3 py-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
+                                >
+                                  <div className="font-medium text-gray-900">{costType.cost_type}</div>
+                                  <div className="text-sm text-gray-600">{costType.description}</div>
+                                </div>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </td>
+                      <td className="border border-gray-300 px-4 py-2">
+                        <input
+                          type="text"
+                          value={item.description || ''}
+                          onChange={(e) => {
+                            const newItems = [...commitmentItems];
+                            newItems[index] = { ...newItems[index], description: e.target.value };
+                            setCommitmentItems(newItems);
+                          }}
+                          className="w-full px-2 py-1 border-0 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                          placeholder="Description"
+                        />
+                      </td>
+                      <td className="border border-gray-300 px-4 py-2">
+                        <input
+                          type="text"
+                          value={item.unit_of_measure || ''}
+                          onChange={(e) => {
+                            const newItems = [...commitmentItems];
+                            newItems[index] = { ...newItems[index], unit_of_measure: e.target.value };
+                            setCommitmentItems(newItems);
+                          }}
+                          className="w-full px-2 py-1 border-0 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                          placeholder="EA, LF, SF..."
+                        />
+                      </td>
+                      <td className="border border-gray-300 px-4 py-2">
+                        <input
+                          type="number"
+                          value={item.quantity || ''}
+                          onChange={(e) => {
+                            const newItems = [...commitmentItems];
+                            newItems[index] = { ...newItems[index], quantity: e.target.value };
+                            setCommitmentItems(newItems);
+                          }}
+                          className="w-full px-2 py-1 border-0 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                          placeholder="0.00"
+                          step="0.01"
+                        />
+                      </td>
+                      <td className="border border-gray-300 px-4 py-2">
+                        <input
+                          type="number"
+                          value={item.unit_price || ''}
+                          onChange={(e) => {
+                            const newItems = [...commitmentItems];
+                            newItems[index] = { ...newItems[index], unit_price: e.target.value };
+                            setCommitmentItems(newItems);
+                          }}
+                          className="w-full px-2 py-1 border-0 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                          placeholder="0.00"
+                          step="0.01"
+                        />
+                      </td>
+                      <td className="border border-gray-300 px-4 py-2">
+                        <input
+                          type="number"
+                          value={item.total_amount || ''}
+                          onChange={(e) => {
+                            const newItems = [...commitmentItems];
+                            newItems[index] = { ...newItems[index], total_amount: e.target.value };
+                            setCommitmentItems(newItems);
+                          }}
+                          className="w-full px-2 py-1 border-0 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                          placeholder="0.00"
+                          step="0.01"
+                        />
+                      </td>
+                      <td className="border border-gray-300 px-4 py-2">
+                        <input
+                          type="text"
+                          value={item.notes || ''}
+                          onChange={(e) => {
+                            const newItems = [...commitmentItems];
+                            newItems[index] = { ...newItems[index], notes: e.target.value };
+                            setCommitmentItems(newItems);
+                          }}
+                          className="w-full px-2 py-1 border-0 focus:outline-none focus:ring-2 focus:ring-blue-500 rounded"
+                          placeholder="Notes"
+                        />
+                      </td>
+                      <td className="border border-gray-300 px-4 py-2">
+                        <div className="flex items-center space-x-2">
+                          <button
+                            type="button"
+                            onClick={() => handleEditItem(item)}
+                            className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded transition-colors"
+                            title="Edit item"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                            </svg>
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => handleDeleteItem(item.vuid)}
+                            className="text-red-500 hover:text-red-700 p-1 hover:bg-red-50 rounded transition-colors"
+                            title="Delete item"
+                          >
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="flex justify-center space-x-4 mt-6">
+              <button
+                type="button"
+                onClick={handleAddNewItem}
+                className="bg-green-600 hover:bg-green-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors"
+              >
+                + Add New Line
+              </button>
+              <button
+                type="button"
+                onClick={handleSaveCommitment}
+                className="bg-blue-600 hover:bg-blue-700 text-white font-semibold py-3 px-6 rounded-lg transition-colors"
+              >
+                Save All Items
+              </button>
+              <button
+                type="button"
+                onClick={closeItemsGrid}
+                className="bg-gray-500 hover:bg-gray-600 text-white font-semibold py-3 px-6 rounded-lg transition-colors"
+              >
+                Close
+              </button>
+            </div>
+          </div>
+        )}
+                          </div>
+                          {(() => {
+                            const filteredCostCodes = costCodes.filter(costCode => 
+                              (costCode.code && costCode.code.toLowerCase().includes((costCodeSearchTerm || '').toLowerCase())) ||
+                              (costCode.description && costCode.description.toLowerCase().includes((costCodeSearchTerm || '').toLowerCase()))
+                            );
+                            
+                            if (filteredCostCodes.length === 0 && costCodeSearchTerm) {
+                              return (
+                                <div className="px-3 py-2 text-gray-500 text-sm">
+                                  No cost codes found matching "{costCodeSearchTerm}"
+                                </div>
+                              );
+                            }
+                            
+                            return filteredCostCodes.map((costCode) => (
+                              <div
+                                key={costCode.vuid}
+                                onClick={() => {
+                                  setItemFormData(prev => ({ ...prev, cost_code_vuid: costCode.vuid }));
+                                  setCostCodeSearchTerm(`${costCode.code} - ${costCode.description}`);
+                                  setCostCodeDropdownOpen(false);
+                                }}
+                                className="px-3 py-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
+                              >
+                                <div className="font-medium text-gray-900">{costCode.code} - {costCode.description}</div>
+                                <div className="text-sm text-gray-600">{costCode.description}</div>
+                              </div>
+                            ));
+                          }}
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="dropdown-container relative">
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Cost Type</label>
+                      <input
+                        type="text"
+                        placeholder="Search cost types..."
+                        value={costTypeSearchTerm}
+                        onChange={(e) => {
+                          const searchTerm = e.target.value;
+                          setCostTypeSearchTerm(searchTerm);
+                          if (!searchTerm) {
+                            setItemFormData(prev => ({ ...prev, cost_type_vuid: '' }));
+                          }
+                          setCostTypeDropdownOpen(true);
+                        }}
+                        onFocus={() => setCostTypeDropdownOpen(true)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent"
+                      />
+                      {costTypeDropdownOpen && (
+                        <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto">
+                          <div
+                            onClick={() => {
+                              setItemFormData(prev => ({ ...prev, cost_type_vuid: '' }));
+                              setCostTypeDropdownOpen(false);
+                            }}
+                            className="px-3 py-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100"
+                          >
+                            No Cost Type
+                          </div>
+                          {costTypes.filter(costType => 
+                            (costType.cost_type && costType.cost_type.toLowerCase().includes((costTypeSearchTerm || '').toLowerCase())) ||
+                            (costType.abbreviation && costType.abbreviation.toLowerCase().includes((costTypeSearchTerm || '').toLowerCase()))
+                          ).map((costType) => (
+                            <div
+                              key={costType.vuid}
+                              onClick={() => {
+                                setItemFormData(prev => ({ ...prev, cost_type_vuid: costType.vuid }));
+                                setCostTypeSearchTerm(`${costType.cost_type} (${costType.abbreviation})`);
+                                setCostTypeDropdownOpen(false);
+                              }}
+                              className="px-3 py-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0"
+                            >
+                              <div className="font-medium text-gray-900">{costType.cost_type}</div>
+                              <div className="text-sm text-gray-600">{costType.abbreviation}</div>
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Unit of Measure</label>
+                      <input
+                        type="text"
+                        name="unit_of_measure"
+                        value={itemFormData.unit_of_measure}
+                        onChange={handleItemInputChange}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent"
+                        placeholder="LF, SF, EA, LS..."
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Description *</label>
+                      <input
+                        type="text"
+                        name="description"
+                        value={itemFormData.description}
+                        onChange={handleItemInputChange}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent"
+                        placeholder="Item description..."
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Quantity *</label>
+                      <input
+                        type="number"
+                        name="quantity"
+                        value={itemFormData.quantity}
+                        onChange={handleItemInputChange}
+                        step="0.0001"
+                        min="0"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent"
+                        placeholder="0.0000"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Unit Price *</label>
+                      <input
+                        type="number"
+                        name="unit_price"
+                        value={itemFormData.unit_price}
+                        onChange={handleItemInputChange}
+                        step="0.01"
+                        min="0"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent"
+                        placeholder="0.00"
+                        required
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Amount</label>
+                      <input
+                        type="text"
+                        name="amount"
+                        value={formatCurrency((parseFloat(itemFormData.quantity) || 0) * (parseFloat(itemFormData.unit_price) || 0))}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg bg-gray-50 text-gray-700 font-medium"
+                        placeholder="$0.00"
+                        readOnly
+                      />
+                    </div>
+
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Retainage %</label>
+                      <input
+                        type="number"
+                        name="retainage"
+                        value={itemFormData.retainage}
+                        onChange={handleItemInputChange}
+                        step="0.01"
+                        min="0"
+                        max="100"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent"
+                        placeholder="0.00"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Notes</label>
+                      <textarea
+                        name="notes"
+                        value={itemFormData.notes}
+                        onChange={handleItemInputChange}
+                        rows="2"
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent"
+                        placeholder="Additional notes..."
+                      />
+                    </div>
+
+                    <div className="dropdown-container relative">
+                      <label className="block text-sm font-semibold text-gray-700 mb-2">Status</label>
+                      <button
+                        type="button"
+                        onClick={() => setItemStatusDropdownOpen(!itemStatusDropdownOpen)}
+                        className="w-full px-3 py-2 border border-gray-300 rounded-lg text-left bg-white focus:outline-none focus:ring-2 focus:ring-gray-800 focus:border-transparent"
+                      >
+                        {itemFormData.status || 'Select Status'}
+                      </button>
+                      {itemStatusDropdownOpen && (
+                        <div className="absolute z-10 w-full mt-1 bg-white border border-gray-300 rounded-lg shadow-lg">
+                          {['active', 'completed', 'cancelled'].map((status) => (
+                            <div
+                              key={status}
+                              onClick={() => {
+                                setItemFormData(prev => ({ ...prev, status }));
+                                setItemStatusDropdownOpen(false);
+                              }}
+                              className="px-3 py-2 hover:bg-gray-100 cursor-pointer border-b border-gray-100 last:border-b-0 capitalize"
+                            >
+                              {status}
+                            </div>
+                          ))}
+                        </div>
+                      )}
+                    </div>
+                  </div>
+
+                  <div className="flex items-center justify-end space-x-4 pt-4">
+                    <button
+                      type="button"
+                      onClick={handleCancelItemForm}
+                      className="px-4 py-2 border border-gray-300 text-gray-700 font-medium rounded-lg hover:bg-gray-50 transition-colors"
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      type="submit"
+                      className="px-6 py-2 bg-gray-800 hover:bg-gray-900 text-white font-medium rounded-lg transition-colors"
+                    >
+                      {editingItem ? 'Update Item' : 'Save & Add Next'}
+                    </button>
+                  </div>
+                </form>
+                
+                {/* Done Adding Items Button */}
+                <div className="mt-4 text-center">
+                  <button
+                    type="button"
+                    onClick={handleDoneAddingItems}
+                    className="px-6 py-2 bg-green-600 hover:bg-green-700 text-white font-medium rounded-lg transition-colors"
+                  >
+                    Done Adding Items
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {/* Items List */}
+            {commitmentItems.length === 0 ? (
+              <div className="text-center py-12">
+                <div className="text-gray-400 text-6xl mb-4">📋</div>
+                <h3 className="text-xl font-semibold text-gray-600 mb-2">No items found</h3>
+                <p className="text-gray-500">Add your first item to get started</p>
+              </div>
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full border-collapse border border-gray-200">
+                  <thead>
+                    <tr className="bg-gray-50">
+                      <th className="border border-gray-200 px-4 py-3 text-left text-sm font-semibold text-gray-700">Item #</th>
+                      <th className="border border-gray-200 px-4 py-3 text-left text-sm font-semibold text-gray-700">Description</th>
+                      <th className="border border-gray-200 px-4 py-3 text-left text-sm font-semibold text-gray-700">Cost Code</th>
+                      <th className="border border-gray-200 px-4 py-3 text-left text-sm font-semibold text-gray-700">Cost Type</th>
+                      <th className="border border-gray-200 px-4 py-3 text-left text-sm font-semibold text-gray-700">UOM</th>
+                      <th className="border border-gray-200 px-4 py-3 text-left text-sm font-semibold text-gray-700">Quantity</th>
+                      <th className="border border-gray-200 px-4 py-3 text-left text-sm font-semibold text-gray-700">Unit Price</th>
+                      <th className="border border-gray-200 px-4 py-3 text-left text-sm font-semibold text-gray-700">Total</th>
+                      <th className="border border-gray-200 px-4 py-3 text-left text-sm font-semibold text-gray-700">Retainage %</th>
+                      <th className="border border-gray-200 px-4 py-3 text-left text-sm font-semibold text-gray-700">Status</th>
+                      <th className="border border-gray-200 px-4 py-3 text-left text-sm font-semibold text-gray-700">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {commitmentItems.map((item) => (
+                      <tr key={item.vuid} className="hover:bg-gray-50">
+                        <td className="border border-gray-200 px-4 py-3 text-sm text-gray-900 font-medium">{item.item_number}</td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm text-gray-900">{item.description}</td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm text-gray-600">{item.cost_code_vuid ? getCostCodeName(item.cost_code_vuid) : '-'}</td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm text-gray-600">{item.cost_type_vuid ? getCostTypeName(item.cost_type_vuid) : '-'}</td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm text-gray-600">{item.unit_of_measure || '-'}</td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm text-gray-900">{parseFloat(item.quantity).toFixed(4)}</td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm text-gray-900">{formatCurrency(item.unit_price)}</td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm text-gray-900 font-semibold">{formatCurrency(item.total_amount)}</td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm text-gray-900">{item.retainage ? `${parseFloat(item.retainage).toFixed(2)}%` : '0.00%'}</td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm">
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                            item.status === 'active' ? 'bg-green-100 text-green-800' : 
+                            item.status === 'completed' ? 'bg-blue-100 text-blue-800' : 'bg-red-100 text-red-800'
+                          }`}>
+                            {item.status}
+                          </span>
+                        </td>
+                        <td className="border border-gray-200 px-4 py-3 text-sm">
+                          <div className="flex items-center space-x-2">
+                            <button
+                              onClick={() => handleEditItem(item)}
+                              className="text-blue-500 hover:text-blue-700 p-1 hover:bg-blue-50 rounded transition-colors"
+                              title="Edit item"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
+                              </svg>
+                            </button>
+                            <button
+                              onClick={() => handleDeleteItem(item.vuid)}
+                              className="text-red-500 hover:text-red-700 p-1 hover:bg-red-50 rounded transition-colors"
+                              title="Delete item"
+                            >
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                              </svg>
+                            </button>
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                  <tfoot>
+                    <tr className="bg-gray-100">
+                      <td colSpan="8" className="border border-gray-200 px-4 py-3 text-right text-sm font-semibold text-gray-700">
+                        Total Commitment Amount:
+                      </td>
+                      <td className="border border-gray-200 px-4 py-3 text-sm font-bold text-gray-900">
+                        {formatCurrency(commitmentItems.reduce((sum, item) => sum + parseFloat(item.total_amount), 0))}
+                      </td>
+                      <td colSpan="2" className="border border-gray-200 px-4 py-3"></td>
+                    </tr>
+                  </tfoot>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* Retrieve Commitments Modal */}
+        {showRetrieveModal && (
+          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+            <div className="bg-white rounded-xl shadow-2xl p-8 max-w-2xl w-full mx-4 max-h-[90vh] overflow-y-auto">
+              <div className="flex items-center justify-between mb-6">
+                <h2 className="text-3xl font-bold text-gray-900">
+                  Retrieve Commitments from Integration
+                </h2>
+                <button
+                  onClick={() => {
+                    setShowRetrieveModal(false);
+                    setRetrieveIntegration(null);
+                  }}
+                  className="text-gray-400 hover:text-gray-600 transition-colors"
+                >
+                  <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
+
+              {/* Description */}
+              <div className="bg-blue-50 border border-blue-200 rounded-lg p-4 mb-6">
+                <div className="flex items-start space-x-3">
+                  <svg className="w-6 h-6 text-blue-600 mt-0.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  <div>
+                    <h3 className="text-lg font-semibold text-blue-900 mb-1">How it works</h3>
+                    <p className="text-blue-800 text-sm">
+                      Select an integration to retrieve commitments from external systems. This will import commitment data 
+                      and create new commitment records in your system.
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Integration Selection */}
+              <div className="mb-6">
+                <label className="block text-lg font-semibold text-gray-900 mb-3">
+                  Select Integration *
+                </label>
+                {integrations.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    <svg className="w-12 h-12 mx-auto mb-4 text-gray-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 10V3L4 14h7v7l9-11h-7z" />
+                    </svg>
+                    <p className="text-lg">No integrations available</p>
+                    <p className="text-sm">Create an integration first to retrieve commitments from external systems.</p>
+                  </div>
+                ) : (
+                  <div className="space-y-3 max-h-60 overflow-y-auto">
+                    {integrations.map((integration) => (
+                      <div
+                        key={integration.vuid}
+                        onClick={() => setRetrieveIntegration(integration)}
+                        className={`p-4 border-2 rounded-lg cursor-pointer transition-all ${
+                          retrieveIntegration?.vuid === integration.vuid
+                            ? 'border-gray-800 bg-gray-50'
+                            : 'border-gray-200 hover:border-gray-300 hover:bg-gray-50'
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div>
+                            <h4 className="font-semibold text-gray-900">{integration.integration_name}</h4>
+                            <p className="text-sm text-gray-600 capitalize">{integration.integration_type.replace('_', ' ')}</p>
+                            {integration.base_url && (
+                              <p className="text-xs text-gray-500 mt-1">{integration.base_url}</p>
+                            )}
+                          </div>
+                          <div className="flex items-center space-x-2">
+                            <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
+                              integration.status === 'active' ? 'bg-green-100 text-green-800' : 
+                              integration.status === 'inactive' ? 'bg-gray-100 text-gray-800' : 'bg-red-100 text-red-800'
+                            }`}>
+                              {integration.status}
+                            </span>
+                            {retrieveIntegration?.vuid === integration.vuid && (
+                              <svg className="w-5 h-5 text-gray-800" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+                              </svg>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Action Buttons */}
+              <div className="flex justify-end space-x-4">
+                <button
+                  onClick={() => {
+                    setShowRetrieveModal(false);
+                    setRetrieveIntegration(null);
+                  }}
+                  className="px-6 py-3 border-2 border-gray-300 text-gray-700 font-semibold rounded-lg hover:bg-gray-50 transition-all"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRetrieveCommitments}
+                  disabled={!retrieveIntegration}
+                  className={`px-6 py-3 font-semibold rounded-lg transition-all ${
+                    retrieveIntegration
+                      ? 'bg-vermillion-600 text-white hover:bg-vermillion-700'
+                      : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                  }`}
+                >
+                  Retrieve Commitments
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+};
+
+export default Commitments;

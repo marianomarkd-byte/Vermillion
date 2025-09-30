@@ -1,0 +1,1617 @@
+from flask import jsonify, request
+from .models import CostType, Project, CostCode, Vendor, ChartOfAccount, Integration, ProjectBudget, ProjectBudgetLine, ProjectContract, ProjectContractItem, Commitment, ProjectSetting, ProjectContractItemAllocation, db
+from datetime import datetime
+import re
+
+def register_routes(app):
+    @app.route('/api/costtypes', methods=['GET'])
+    def get_cost_types():
+        cost_types = CostType.query.all()
+        return jsonify([{
+            'vuid': ct.vuid,
+            'cost_type': ct.cost_type,
+            'abbreviation': ct.abbreviation,
+            'description': ct.description,
+            'status': ct.status,
+            'expense_account': ct.expense_account,
+            'created_at': ct.created_at.isoformat() if ct.created_at else None
+        } for ct in cost_types])
+
+    @app.route('/api/costtypes', methods=['POST'])
+    def create_cost_type():
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['cost_type', 'abbreviation', 'description', 'expense_account']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+
+        # Create new cost type
+        cost_type = CostType(
+            cost_type=data['cost_type'],
+            abbreviation=data['abbreviation'],
+            description=data['description'],
+            expense_account=data['expense_account'],
+            status=data.get('status', 'active')
+        )
+
+        try:
+            db.session.add(cost_type)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': cost_type.vuid,
+            'cost_type': cost_type.cost_type,
+            'abbreviation': cost_type.abbreviation,
+            'description': cost_type.description,
+            'status': cost_type.status,
+            'expense_account': cost_type.expense_account,
+            'created_at': cost_type.created_at.isoformat() if cost_type.created_at else None
+        }), 201
+
+    @app.route('/api/costtypes/<vuid>', methods=['GET'])
+    def get_cost_type(vuid):
+        cost_type = CostType.query.get_or_404(vuid)
+        return jsonify({
+            'vuid': cost_type.vuid,
+            'cost_type': cost_type.cost_type,
+            'abbreviation': cost_type.abbreviation,
+            'description': cost_type.description,
+            'status': cost_type.status,
+            'expense_account': cost_type.expense_account,
+            'created_at': cost_type.created_at.isoformat() if cost_type.created_at else None
+        })
+
+    @app.route('/api/costtypes/<vuid>', methods=['PUT'])
+    def update_cost_type(vuid):
+        cost_type = CostType.query.get_or_404(vuid)
+        data = request.get_json()
+
+        if 'cost_type' in data:
+            cost_type.cost_type = data['cost_type']
+        if 'abbreviation' in data:
+            cost_type.abbreviation = data['abbreviation']
+        if 'description' in data:
+            cost_type.description = data['description']
+        if 'expense_account' in data:
+            cost_type.expense_account = data['expense_account']
+        if 'status' in data:
+            cost_type.status = data['status']
+
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': cost_type.vuid,
+            'cost_type': cost_type.cost_type,
+            'abbreviation': cost_type.abbreviation,
+            'description': cost_type.description,
+            'status': cost_type.status,
+            'expense_account': cost_type.expense_account,
+            'created_at': cost_type.created_at.isoformat() if cost_type.created_at else None
+        })
+
+    @app.route('/api/costtypes/<vuid>', methods=['DELETE'])
+    def delete_cost_type(vuid):
+        cost_type = CostType.query.get_or_404(vuid)
+        
+        try:
+            db.session.delete(cost_type)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({'message': 'Cost type deleted successfully'})
+
+    @app.route('/api/costcodes', methods=['GET'])
+    def get_cost_codes():
+        cost_codes = CostCode.query.all()
+        return jsonify([{
+            'vuid': cc.vuid,
+            'code': cc.code,
+            'description': cc.description,
+            'division': cc.division,
+            'status': cc.status,
+            'created_at': cc.created_at.isoformat() if cc.created_at else None
+        } for cc in cost_codes])
+
+    @app.route('/api/costcodes', methods=['POST'])
+    def create_cost_code():
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['code', 'description', 'division']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+
+        # Create new cost code
+        cost_code = CostCode(
+            code=data['code'],
+            description=data['description'],
+            division=data['division'],
+            status=data.get('status', 'active')
+        )
+
+        try:
+            db.session.add(cost_code)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': cost_code.vuid,
+            'code': cost_code.code,
+            'description': cost_code.description,
+            'division': cost_code.division,
+            'status': cost_code.status,
+            'created_at': cost_code.created_at.isoformat() if cost_code.created_at else None
+        }), 201
+
+    @app.route('/api/costcodes/<vuid>', methods=['PUT'])
+    def update_cost_code(vuid):
+        cost_code = CostCode.query.get_or_404(vuid)
+        data = request.get_json()
+
+        if 'code' in data:
+            cost_code.code = data['code']
+        if 'description' in data:
+            cost_code.description = data['description']
+        if 'division' in data:
+            cost_code.division = data['division']
+        if 'status' in data:
+            cost_code.status = data['status']
+
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': cost_code.vuid,
+            'code': cost_code.code,
+            'description': cost_code.description,
+            'division': cost_code.division,
+            'status': cost_code.status,
+            'created_at': cost_code.created_at.isoformat() if cost_code.created_at else None
+        })
+
+    @app.route('/api/costcodes/<vuid>', methods=['DELETE'])
+    def delete_cost_code(vuid):
+        cost_code = CostCode.query.get_or_404(vuid)
+        
+        try:
+            db.session.delete(cost_code)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({'message': 'Cost code deleted successfully'})
+
+    @app.route('/api/projects', methods=['GET'])
+    def get_projects():
+        projects = Project.query.all()
+        return jsonify([{
+            'vuid': p.vuid,
+            'project_number': p.project_number,
+            'project_name': p.project_name,
+            'project_description': p.project_description,
+            'project_start_date': p.project_start_date.isoformat() if p.project_start_date else None,
+            'project_end_date': p.project_end_date.isoformat() if p.project_end_date else None,
+            'status': p.status,
+            'created_at': p.created_at.isoformat() if p.created_at else None,
+            'updated_at': p.updated_at.isoformat() if p.updated_at else None
+        } for p in projects])
+
+    @app.route('/api/projects', methods=['POST'])
+    def create_project():
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['project_number', 'project_name', 'project_start_date', 'project_end_date']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+
+        # Create new project
+        project = Project(
+            project_number=data['project_number'],
+            project_name=data['project_name'],
+            project_description=data.get('project_description'),
+            project_start_date=datetime.strptime(data['project_start_date'], '%Y-%m-%d').date(),
+            project_end_date=datetime.strptime(data['project_end_date'], '%Y-%m-%d').date(),
+            status=data.get('status', 'active')
+        )
+
+        try:
+            db.session.add(project)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': project.vuid,
+            'project_number': project.project_number,
+            'project_name': project.project_name,
+            'project_description': project.project_description,
+            'project_start_date': project.project_start_date.isoformat() if project.project_start_date else None,
+            'project_end_date': project.project_end_date.isoformat() if project.project_end_date else None,
+            'status': project.status,
+            'created_at': project.created_at.isoformat() if project.created_at else None,
+            'updated_at': project.updated_at.isoformat() if project.updated_at else None
+        }), 201
+
+    @app.route('/api/projects/<vuid>', methods=['GET'])
+    def get_project(vuid):
+        project = Project.query.get_or_404(vuid)
+        return jsonify({
+            'vuid': project.vuid,
+            'project_number': project.project_number,
+            'project_name': project.project_name,
+            'project_description': project.project_description,
+            'project_start_date': project.project_start_date.isoformat() if project.project_start_date else None,
+            'project_end_date': project.project_end_date.isoformat() if project.project_end_date else None,
+            'status': project.status,
+            'created_at': project.created_at.isoformat() if project.created_at else None,
+            'updated_at': project.updated_at.isoformat() if project.updated_at else None
+        })
+
+    @app.route('/api/projects/<vuid>', methods=['PUT'])
+    def update_project(vuid):
+        project = Project.query.get_or_404(vuid)
+        data = request.get_json()
+
+        if 'project_number' in data:
+            project.project_number = data['project_number']
+        if 'project_name' in data:
+            project.project_name = data['project_name']
+        if 'project_description' in data:
+            project.project_description = data['project_description']
+        if 'project_start_date' in data:
+            project.project_start_date = datetime.strptime(data['project_start_date'], '%Y-%m-%d').date()
+        if 'project_end_date' in data:
+            project.project_end_date = datetime.strptime(data['project_end_date'], '%Y-%m-%d').date()
+        if 'status' in data:
+            project.status = data['status']
+
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': project.vuid,
+            'project_number': project.project_number,
+            'project_name': project.project_name,
+            'project_description': project.project_description,
+            'project_start_date': project.project_start_date.isoformat() if project.project_start_date else None,
+            'project_end_date': project.project_end_date.isoformat() if project.project_end_date else None,
+            'status': project.status,
+            'created_at': project.created_at.isoformat() if project.created_at else None,
+            'updated_at': project.updated_at.isoformat() if project.updated_at else None
+        })
+
+    @app.route('/api/projects/<vuid>', methods=['DELETE'])
+    def delete_project(vuid):
+        project = Project.query.get_or_404(vuid)
+        
+        try:
+            db.session.delete(project)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({'message': 'Project deleted successfully'})
+
+    @app.route('/api/vendors', methods=['GET'])
+    def get_vendors():
+        vendors = Vendor.query.all()
+        return jsonify([{
+            'vuid': v.vuid,
+            'vendor_number': v.vendor_number,
+            'vendor_name': v.vendor_name,
+            'company_name': v.company_name,
+            'contact_person': v.contact_person,
+            'email': v.email,
+            'phone': v.phone,
+            'fax': v.fax,
+            'website': v.website,
+            'address_line1': v.address_line1,
+            'address_line2': v.address_line2,
+            'city': v.city,
+            'state': v.state,
+            'postal_code': v.postal_code,
+            'country': v.country,
+            'tax_id': v.tax_id,
+            'duns_number': v.duns_number,
+            'business_type': v.business_type,
+            'industry': v.industry,
+            'credit_limit': float(v.credit_limit) if v.credit_limit else None,
+            'payment_terms': v.payment_terms,
+            'discount_terms': v.discount_terms,
+            'insurance_certificate': v.insurance_certificate,
+            'insurance_expiry': v.insurance_expiry.isoformat() if v.insurance_expiry else None,
+            'workers_comp': v.workers_comp,
+            'liability_insurance': v.liability_insurance,
+            'status': v.status,
+            'vendor_type': v.vendor_type,
+            'rating': v.rating,
+            'notes': v.notes,
+            'created_at': v.created_at.isoformat() if v.created_at else None,
+            'updated_at': v.updated_at.isoformat() if v.updated_at else None
+        } for v in vendors])
+
+    @app.route('/api/vendors', methods=['POST'])
+    def create_vendor():
+        data = request.get_json()
+        
+        # Validate required fields (vendor_number is no longer required)
+        required_fields = ['vendor_name']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+
+        # Auto-generate vendor number by finding the highest existing number and incrementing
+        try:
+            highest_vendor = Vendor.query.order_by(Vendor.vendor_number.desc()).first()
+            if highest_vendor and highest_vendor.vendor_number:
+                # Extract numeric part and increment
+                try:
+                    # Handle both numeric and alphanumeric vendor numbers
+                    if highest_vendor.vendor_number.isdigit():
+                        next_number = int(highest_vendor.vendor_number) + 1
+                    else:
+                        # If alphanumeric, find the last numeric part
+                        numeric_parts = re.findall(r'\d+', highest_vendor.vendor_number)
+                        if numeric_parts:
+                            next_number = int(numeric_parts[-1]) + 1
+                        else:
+                            next_number = 1
+                except (ValueError, IndexError):
+                    next_number = 1
+            else:
+                next_number = 1
+            
+            # Format vendor number (you can adjust this format as needed)
+            vendor_number = f"V{next_number:04d}"  # V0001, V0002, etc.
+        except Exception as e:
+            # Fallback to a simple increment
+            vendor_number = f"V{1:04d}"
+
+        # Create new vendor
+        vendor = Vendor(
+            vendor_number=vendor_number,
+            vendor_name=data['vendor_name'],
+            company_name=data.get('company_name'),
+            contact_person=data.get('contact_person'),
+            email=data.get('email'),
+            phone=data.get('phone'),
+            fax=data.get('fax'),
+            website=data.get('website'),
+            address_line1=data.get('address_line1'),
+            address_line2=data.get('address_line2'),
+            city=data.get('city'),
+            state=data.get('state'),
+            postal_code=data.get('postal_code'),
+            country=data.get('country'),
+            tax_id=data.get('tax_id'),
+            duns_number=data.get('duns_number'),
+            business_type=data.get('business_type'),
+            industry=data.get('industry'),
+            credit_limit=data.get('credit_limit'),
+            payment_terms=data.get('payment_terms'),
+            discount_terms=data.get('discount_terms'),
+            insurance_certificate=data.get('insurance_certificate', False),
+            insurance_expiry=datetime.strptime(data['insurance_expiry'], '%Y-%m-%d').date() if data.get('insurance_expiry') else None,
+            workers_comp=data.get('workers_comp', False),
+            liability_insurance=data.get('liability_insurance', False),
+            status=data.get('status', 'active'),
+            vendor_type=data.get('vendor_type'),
+            rating=data.get('rating'),
+            notes=data.get('notes')
+        )
+
+        try:
+            db.session.add(vendor)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': vendor.vuid,
+            'vendor_number': vendor.vendor_number,
+            'vendor_name': vendor.vendor_name,
+            'company_name': vendor.company_name,
+            'contact_person': vendor.contact_person,
+            'email': vendor.email,
+            'phone': vendor.phone,
+            'fax': vendor.fax,
+            'website': vendor.website,
+            'address_line1': vendor.address_line1,
+            'address_line2': vendor.address_line2,
+            'city': vendor.city,
+            'state': vendor.state,
+            'postal_code': vendor.postal_code,
+            'country': vendor.country,
+            'tax_id': vendor.tax_id,
+            'duns_number': vendor.duns_number,
+            'business_type': vendor.business_type,
+            'industry': vendor.industry,
+            'credit_limit': float(vendor.credit_limit) if vendor.credit_limit else None,
+            'payment_terms': vendor.payment_terms,
+            'discount_terms': vendor.discount_terms,
+            'insurance_certificate': vendor.insurance_certificate,
+            'insurance_expiry': vendor.insurance_expiry.isoformat() if vendor.insurance_expiry else None,
+            'workers_comp': vendor.workers_comp,
+            'liability_insurance': vendor.liability_insurance,
+            'status': vendor.status,
+            'vendor_type': vendor.vendor_type,
+            'rating': vendor.rating,
+            'notes': vendor.notes,
+            'created_at': vendor.created_at.isoformat() if vendor.created_at else None,
+            'updated_at': vendor.updated_at.isoformat() if vendor.updated_at else None
+        }), 201
+
+    @app.route('/api/vendors/<vuid>', methods=['GET'])
+    def get_vendor(vuid):
+        vendor = Vendor.query.get_or_404(vuid)
+        return jsonify({
+            'vuid': vendor.vuid,
+            'vendor_number': vendor.vendor_number,
+            'vendor_name': vendor.vendor_name,
+            'company_name': vendor.company_name,
+            'contact_person': vendor.contact_person,
+            'email': vendor.email,
+            'phone': vendor.phone,
+            'fax': vendor.fax,
+            'website': vendor.website,
+            'address_line1': vendor.address_line1,
+            'address_line2': vendor.address_line2,
+            'city': vendor.city,
+            'state': vendor.state,
+            'postal_code': vendor.postal_code,
+            'country': vendor.country,
+            'tax_id': vendor.tax_id,
+            'duns_number': vendor.duns_number,
+            'business_type': vendor.business_type,
+            'industry': vendor.industry,
+            'credit_limit': float(vendor.credit_limit) if vendor.credit_limit else None,
+            'payment_terms': vendor.payment_terms,
+            'discount_terms': vendor.discount_terms,
+            'insurance_certificate': vendor.insurance_certificate,
+            'insurance_expiry': vendor.insurance_expiry.isoformat() if vendor.insurance_expiry else None,
+            'workers_comp': vendor.workers_comp,
+            'liability_insurance': vendor.liability_insurance,
+            'status': vendor.status,
+            'vendor_type': vendor.vendor_type,
+            'rating': vendor.rating,
+            'notes': vendor.notes,
+            'created_at': vendor.created_at.isoformat() if vendor.created_at else None,
+            'updated_at': vendor.updated_at.isoformat() if vendor.updated_at else None
+        })
+
+    @app.route('/api/vendors/<vuid>', methods=['PUT'])
+    def update_vendor(vuid):
+        vendor = Vendor.query.get_or_404(vuid)
+        data = request.get_json()
+
+        # Update fields if provided
+        if 'vendor_number' in data:
+            vendor.vendor_number = data['vendor_number']
+        if 'vendor_name' in data:
+            vendor.vendor_name = data['vendor_name']
+        if 'company_name' in data:
+            vendor.company_name = data['company_name']
+        if 'contact_person' in data:
+            vendor.contact_person = data['contact_person']
+        if 'email' in data:
+            vendor.email = data['email']
+        if 'phone' in data:
+            vendor.phone = data['phone']
+        if 'fax' in data:
+            vendor.fax = data['fax']
+        if 'website' in data:
+            vendor.website = data['website']
+        if 'address_line1' in data:
+            vendor.address_line1 = data['address_line1']
+        if 'address_line2' in data:
+            vendor.address_line2 = data['address_line2']
+        if 'city' in data:
+            vendor.city = data['city']
+        if 'state' in data:
+            vendor.state = data['state']
+        if 'postal_code' in data:
+            vendor.postal_code = data['postal_code']
+        if 'country' in data:
+            vendor.country = data['country']
+        if 'tax_id' in data:
+            vendor.tax_id = data['tax_id']
+        if 'duns_number' in data:
+            vendor.duns_number = data['duns_number']
+        if 'business_type' in data:
+            vendor.business_type = data['business_type']
+        if 'industry' in data:
+            vendor.industry = data['industry']
+        if 'credit_limit' in data:
+            vendor.credit_limit = data['credit_limit']
+        if 'payment_terms' in data:
+            vendor.payment_terms = data['payment_terms']
+        if 'discount_terms' in data:
+            vendor.discount_terms = data['discount_terms']
+        if 'insurance_certificate' in data:
+            vendor.insurance_certificate = data['insurance_certificate']
+        if 'insurance_expiry' in data:
+            vendor.insurance_expiry = datetime.strptime(data['insurance_expiry'], '%Y-%m-%d').date()
+        if 'workers_comp' in data:
+            vendor.workers_comp = data['workers_comp']
+        if 'liability_insurance' in data:
+            vendor.liability_insurance = data['liability_insurance']
+        if 'status' in data:
+            vendor.status = data['status']
+        if 'vendor_type' in data:
+            vendor.vendor_type = data['vendor_type']
+        if 'rating' in data:
+            vendor.rating = data['rating']
+        if 'notes' in data:
+            vendor.notes = data['notes']
+
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': vendor.vuid,
+            'vendor_number': vendor.vendor_number,
+            'vendor_name': vendor.vendor_name,
+            'company_name': vendor.company_name,
+            'contact_person': vendor.contact_person,
+            'email': vendor.email,
+            'phone': vendor.phone,
+            'fax': vendor.fax,
+            'website': vendor.website,
+            'address_line1': vendor.address_line1,
+            'address_line2': vendor.address_line2,
+            'city': vendor.city,
+            'state': vendor.state,
+            'postal_code': vendor.postal_code,
+            'country': vendor.country,
+            'tax_id': vendor.tax_id,
+            'duns_number': vendor.duns_number,
+            'business_type': vendor.business_type,
+            'industry': vendor.industry,
+            'credit_limit': float(vendor.credit_limit) if vendor.credit_limit else None,
+            'payment_terms': vendor.payment_terms,
+            'discount_terms': vendor.discount_terms,
+            'insurance_certificate': vendor.insurance_certificate,
+            'insurance_expiry': vendor.insurance_expiry.isoformat() if vendor.insurance_expiry else None,
+            'workers_comp': vendor.workers_comp,
+            'liability_insurance': vendor.liability_insurance,
+            'status': vendor.status,
+            'vendor_type': vendor.vendor_type,
+            'rating': vendor.rating,
+            'notes': vendor.notes,
+            'created_at': vendor.created_at.isoformat() if vendor.created_at else None,
+            'updated_at': vendor.updated_at.isoformat() if vendor.updated_at else None
+        })
+
+    @app.route('/api/vendors/<vuid>', methods=['DELETE'])
+    def delete_vendor(vuid):
+        vendor = Vendor.query.get_or_404(vuid)
+        
+        try:
+            db.session.delete(vendor)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({'message': 'Vendor deleted successfully'})
+
+    @app.route('/api/chartofaccounts', methods=['GET'])
+    def get_chart_of_accounts():
+        accounts = ChartOfAccount.query.all()
+        return jsonify([{
+            'vuid': a.vuid,
+            'account_number': a.account_number,
+            'account_name': a.account_name,
+            'account_type': a.account_type,
+            'account_category': a.account_category,
+            'account_subcategory': a.account_subcategory,
+            'description': a.description,
+            'normal_balance': a.normal_balance,
+            'status': a.status,
+            'created_at': a.created_at.isoformat() if a.created_at else None,
+            'updated_at': a.updated_at.isoformat() if a.updated_at else None
+        } for a in accounts])
+
+    @app.route('/api/chartofaccounts', methods=['POST'])
+    def create_chart_of_account():
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['account_number', 'account_name', 'account_type']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+
+        # Create new account
+        account = ChartOfAccount(
+            account_number=data['account_number'],
+            account_name=data['account_name'],
+            account_type=data['account_type'],
+            account_category=data.get('account_category'),
+            account_subcategory=data.get('account_subcategory'),
+            description=data.get('description'),
+            normal_balance=data.get('normal_balance', 'Debit'),
+            status=data.get('status', 'active')
+        )
+
+        try:
+            db.session.add(account)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': account.vuid,
+            'account_number': account.account_number,
+            'account_name': account.account_name,
+            'account_type': account.account_type,
+            'account_category': account.account_category,
+            'account_subcategory': account.account_subcategory,
+            'description': account.description,
+            'normal_balance': account.normal_balance,
+            'status': account.status,
+            'created_at': account.created_at.isoformat() if account.created_at else None,
+            'updated_at': account.updated_at.isoformat() if account.updated_at else None
+        }), 201
+
+    @app.route('/api/integrations', methods=['GET'])
+    def get_integrations():
+        integrations = Integration.query.all()
+        return jsonify([{
+            'vuid': i.vuid,
+            'integration_name': i.integration_name,
+            'integration_type': i.integration_type,
+            'api_key': i.api_key,
+            'api_secret': i.api_secret,
+            'base_url': i.base_url,
+            'username': i.username,
+            'password': i.password,
+            'status': i.status,
+            'description': i.description,
+            'created_at': i.created_at.isoformat() if i.created_at else None,
+            'updated_at': i.updated_at.isoformat() if i.updated_at else None
+        } for i in integrations])
+
+    @app.route('/api/integrations', methods=['POST'])
+    def create_integration():
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['integration_name', 'integration_type']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+
+        # Create new integration
+        integration = Integration(
+            integration_name=data['integration_name'],
+            integration_type=data['integration_type'],
+            api_key=data.get('api_key'),
+            api_secret=data.get('api_secret'),
+            base_url=data.get('base_url'),
+            username=data.get('username'),
+            password=data.get('password'),
+            status=data.get('status', 'active'),
+            description=data.get('description')
+        )
+
+        try:
+            db.session.add(integration)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': integration.vuid,
+            'integration_name': integration.integration_name,
+            'integration_type': integration.integration_type,
+            'api_key': integration.api_key,
+            'api_secret': integration.api_secret,
+            'base_url': integration.base_url,
+            'username': integration.username,
+            'password': integration.password,
+            'status': integration.status,
+            'description': integration.description,
+            'created_at': integration.created_at.isoformat() if integration.created_at else None,
+            'updated_at': integration.updated_at.isoformat() if integration.updated_at else None
+        }), 201
+
+    @app.route('/api/commitments', methods=['GET'])
+    def get_commitments():
+        commitments = Commitment.query.all()
+        return jsonify([{
+            'vuid': c.vuid,
+            'project_vuid': c.project_vuid,
+            'commitment_number': c.commitment_number,
+            'description': c.commitment_name,  # Map commitment_name to description for frontend
+            'commitment_type': c.commitment_type,
+            'retainage': float(c.commitment_amount) if c.commitment_amount else None,  # Map commitment_amount to retainage for frontend
+            'vendor_vuid': c.vendor_vuid,
+            'status': c.status,
+            'notes': c.notes,
+            'created_at': c.created_at.isoformat() if c.created_at else None,
+            'updated_at': c.updated_at.isoformat() if c.updated_at else None
+        } for c in commitments])
+
+    @app.route('/api/commitments', methods=['POST'])
+    def create_commitment():
+        data = request.get_json()
+        
+        # Map frontend fields to backend fields
+        # Frontend sends: description, retainage, commitment_date
+        # Backend expects: commitment_name, commitment_amount
+        
+        # Validate required fields
+        required_fields = ['project_vuid', 'commitment_number', 'commitment_type']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+        
+        # Map description to commitment_name
+        if not data.get('description'):
+            return jsonify({'error': 'Missing required field: description'}), 400
+            
+        # Map retainage to commitment_amount (or use a default if not provided)
+        # Clean empty strings to None, then convert to float or use default
+        retainage_value = data.get('retainage')
+        if retainage_value == '':
+            retainage_value = None
+        commitment_amount = float(retainage_value) if retainage_value else 0.00
+
+        # Create new commitment
+        commitment = Commitment(
+            project_vuid=data['project_vuid'],
+            commitment_number=data['commitment_number'],
+            commitment_name=data['description'],  # Map description to commitment_name
+            commitment_type=data['commitment_type'],
+            commitment_amount=commitment_amount,  # Map retainage to commitment_amount
+            vendor_vuid=data.get('vendor_vuid'),
+            status=data.get('status', 'active'),
+            notes=data.get('notes')
+        )
+
+        try:
+            db.session.add(commitment)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': commitment.vuid,
+            'project_vuid': commitment.project_vuid,
+            'commitment_number': commitment.commitment_number,
+            'description': commitment.commitment_name,  # Map commitment_name back to description
+            'commitment_type': commitment.commitment_type,
+            'retainage': float(commitment.commitment_amount) if commitment.commitment_amount else None,  # Map commitment_amount back to retainage
+            'vendor_vuid': commitment.vendor_vuid,
+            'status': commitment.status,
+            'notes': commitment.notes,
+            'created_at': commitment.created_at.isoformat() if commitment.created_at else None,
+            'updated_at': commitment.updated_at.isoformat() if commitment.updated_at else None
+        }), 201
+
+    @app.route('/api/project-budgets', methods=['GET'])
+    def get_project_budgets():
+        budgets = ProjectBudget.query.all()
+        return jsonify([{
+            'vuid': b.vuid,
+            'project_vuid': b.project_vuid,
+            'description': b.description,
+            'budget_amount': float(b.budget_amount) if b.budget_amount else None,
+            'budget_type': b.budget_type,
+            'post_date': b.post_date.isoformat() if b.post_date else None,
+            'finalized': b.finalized,
+            'status': b.status,
+            'notes': b.notes,
+            'created_at': b.created_at.isoformat() if b.created_at else None,
+            'updated_at': b.updated_at.isoformat() if b.updated_at else None
+        } for b in budgets])
+
+    @app.route('/api/project-budgets', methods=['POST'])
+    def create_project_budget():
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['project_vuid', 'description', 'budget_type']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+
+        # Create new budget
+        budget = ProjectBudget(
+            project_vuid=data['project_vuid'],
+            description=data['description'],
+            budget_amount=data.get('budget_amount', 0),  # Make budget_amount optional with default 0
+            budget_type=data['budget_type'],
+            post_date=datetime.strptime(data['post_date'], '%Y-%m-%d').date() if data.get('post_date') else None,
+            finalized=data.get('finalized', False),
+            status=data.get('status', 'active'),
+            notes=data.get('notes')
+        )
+
+        try:
+            db.session.add(budget)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': budget.vuid,
+            'project_vuid': budget.project_vuid,
+            'description': budget.description,
+            'budget_amount': float(budget.budget_amount) if budget.budget_amount else None,
+            'budget_type': budget.budget_type,
+            'post_date': budget.post_date.isoformat() if budget.post_date else None,
+            'finalized': budget.finalized,
+            'status': budget.status,
+            'notes': budget.notes,
+            'created_at': budget.created_at.isoformat() if budget.created_at else None,
+            'updated_at': budget.updated_at.isoformat() if budget.updated_at else None
+        }), 201
+
+    @app.route('/api/project-budgets/<budget_vuid>', methods=['PUT'])
+    def update_project_budget(budget_vuid):
+        budget = ProjectBudget.query.get(budget_vuid)
+        if not budget:
+            return jsonify({'error': 'Budget not found'}), 404
+        
+        data = request.get_json()
+        
+        # Update budget fields
+        if 'project_vuid' in data:
+            budget.project_vuid = data['project_vuid']
+        if 'description' in data:
+            budget.description = data['description']
+        if 'budget_amount' in data:
+            budget.budget_amount = data['budget_amount']
+        if 'budget_type' in data:
+            budget.budget_type = data['budget_type']
+        if 'post_date' in data:
+            budget.post_date = datetime.strptime(data['post_date'], '%Y-%m-%d').date() if data['post_date'] else None
+        if 'finalized' in data:
+            budget.finalized = data['finalized']
+        if 'status' in data:
+            budget.status = data['status']
+        if 'notes' in data:
+            budget.notes = data['notes']
+        
+        budget.updated_at = datetime.utcnow()
+        
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': budget.vuid,
+            'project_vuid': budget.project_vuid,
+            'description': budget.description,
+            'budget_amount': float(budget.budget_amount) if budget.budget_amount else None,
+            'budget_type': budget.budget_type,
+            'post_date': budget.post_date.isoformat() if budget.post_date else None,
+            'finalized': budget.finalized,
+            'status': budget.status,
+            'notes': budget.notes,
+            'created_at': budget.created_at.isoformat() if budget.created_at else None,
+            'updated_at': budget.updated_at.isoformat() if budget.updated_at else None
+        })
+
+    @app.route('/api/project-budgets/<budget_vuid>', methods=['DELETE'])
+    def delete_project_budget(budget_vuid):
+        budget = ProjectBudget.query.get(budget_vuid)
+        if not budget:
+            return jsonify({'error': 'Budget not found'}), 404
+        
+        try:
+            # Delete associated budget lines first
+            budget_lines = ProjectBudgetLine.query.filter_by(budget_vuid=budget_vuid).all()
+            for line in budget_lines:
+                db.session.delete(line)
+            
+            # Delete the budget
+            db.session.delete(budget)
+            db.session.commit()
+            
+            return jsonify({'message': 'Budget deleted successfully'})
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+    @app.route('/api/project-contracts', methods=['GET'])
+    def get_project_contracts():
+        contracts = ProjectContract.query.all()
+        return jsonify([{
+            'vuid': c.vuid,
+            'project_vuid': c.project_vuid,
+            'contract_number': c.contract_number,
+            'contract_name': c.contract_name,
+            'contract_type': c.contract_type,
+            'contract_amount': float(c.contract_amount) if c.contract_amount else None,
+            'vendor_vuid': c.vendor_vuid,
+            'start_date': c.start_date.isoformat() if c.start_date else None,
+            'end_date': c.end_date.isoformat() if c.end_date else None,
+            'status': c.status,
+            'notes': c.notes,
+            'created_at': c.created_at.isoformat() if c.created_at else None,
+            'updated_at': c.updated_at.isoformat() if c.updated_at else None
+        } for c in contracts])
+
+    @app.route('/api/project-contracts', methods=['POST'])
+    def create_project_contract():
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['project_vuid', 'contract_number', 'contract_name', 'contract_type', 'contract_amount', 'start_date', 'end_date']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+
+        # Create new contract
+        contract = ProjectContract(
+            project_vuid=data['project_vuid'],
+            contract_number=data['contract_number'],
+            contract_name=data['contract_name'],
+            contract_type=data['contract_type'],
+            contract_amount=data['contract_amount'],
+            vendor_vuid=data.get('vendor_vuid'),
+            start_date=datetime.strptime(data['start_date'], '%Y-%m-%d').date(),
+            end_date=datetime.strptime(data['end_date'], '%Y-%m-%d').date(),
+            status=data.get('status', 'active'),
+            notes=data.get('notes')
+        )
+
+        try:
+            db.session.add(contract)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': contract.vuid,
+            'project_vuid': contract.project_vuid,
+            'contract_number': contract.contract_number,
+            'contract_name': contract.contract_name,
+            'contract_type': contract.contract_type,
+            'contract_amount': float(contract.contract_amount) if contract.contract_amount else None,
+            'vendor_vuid': contract.vendor_vuid,
+            'start_date': contract.start_date.isoformat() if contract.start_date else None,
+            'end_date': contract.end_date.isoformat() if contract.end_date else None,
+            'status': contract.status,
+            'notes': contract.notes,
+            'created_at': contract.created_at.isoformat() if contract.created_at else None,
+            'updated_at': contract.updated_at.isoformat() if contract.updated_at else None
+        }), 201
+
+    # Budget Lines endpoints
+    @app.route('/api/project-budgets/<budget_vuid>/lines', methods=['GET'])
+    def get_budget_lines(budget_vuid):
+        from .models import ProjectBudgetLine
+        lines = ProjectBudgetLine.query.filter_by(budget_vuid=budget_vuid).all()
+        return jsonify([{
+            'vuid': line.vuid,
+            'budget_vuid': line.budget_vuid,
+            'cost_code_vuid': line.cost_code_vuid,
+            'cost_type_vuid': line.cost_type_vuid,
+            'budget_amount': float(line.budget_amount) if line.budget_amount else None,
+            'notes': line.notes,
+            'status': line.status,
+            'created_at': line.created_at.isoformat() if line.created_at else None,
+            'updated_at': line.updated_at.isoformat() if line.updated_at else None
+        } for line in lines])
+
+    @app.route('/api/projects/<project_vuid>/budget-lines', methods=['GET'])
+    def get_project_budget_lines(project_vuid):
+        from .models import ProjectBudget, ProjectBudgetLine
+        # Get all budgets for the project
+        budgets = ProjectBudget.query.filter_by(project_vuid=project_vuid).all()
+        budget_vuids = [b.vuid for b in budgets]
+        
+        # Get all budget lines for those budgets
+        lines = ProjectBudgetLine.query.filter(ProjectBudgetLine.budget_vuid.in_(budget_vuids)).all()
+        
+        # Return unique cost code and cost type combinations
+        combinations = {}
+        for line in lines:
+            key = f"{line.cost_code_vuid}_{line.cost_type_vuid}"
+            if key not in combinations:
+                combinations[key] = {
+                    'cost_code_vuid': line.cost_code_vuid,
+                    'cost_type_vuid': line.cost_type_vuid
+                }
+        
+        return jsonify(list(combinations.values()))
+
+    @app.route('/api/project-budget-lines', methods=['POST'])
+    def create_budget_line():
+        from .models import ProjectBudgetLine
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['budget_vuid', 'cost_code_vuid', 'cost_type_vuid', 'budget_amount']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+
+        # Create new budget line
+        line = ProjectBudgetLine(
+            budget_vuid=data['budget_vuid'],
+            cost_code_vuid=data['cost_code_vuid'],
+            cost_type_vuid=data['cost_type_vuid'],
+            budget_amount=data['budget_amount'],
+            notes=data.get('notes'),
+            status=data.get('status', 'active')
+        )
+
+        try:
+            db.session.add(line)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': line.vuid,
+            'budget_vuid': line.budget_vuid,
+            'cost_code_vuid': line.cost_code_vuid,
+            'cost_type_vuid': line.cost_type_vuid,
+            'budget_amount': float(line.budget_amount) if line.budget_amount else None,
+            'notes': line.notes,
+            'status': line.status,
+            'created_at': line.created_at.isoformat() if line.created_at else None,
+            'updated_at': line.updated_at.isoformat() if line.updated_at else None
+        }), 201
+
+    @app.route('/api/project-budget-lines/<vuid>', methods=['PUT'])
+    def update_budget_line(vuid):
+        from .models import ProjectBudgetLine
+        line = ProjectBudgetLine.query.get_or_404(vuid)
+        data = request.get_json()
+
+        if 'cost_code_vuid' in data:
+            line.cost_code_vuid = data['cost_code_vuid']
+        if 'cost_type_vuid' in data:
+            line.cost_type_vuid = data['cost_type_vuid']
+        if 'budget_amount' in data:
+            line.budget_amount = data['budget_amount']
+        if 'notes' in data:
+            line.notes = data['notes']
+        if 'status' in data:
+            line.status = data['status']
+
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': line.vuid,
+            'budget_vuid': line.budget_vuid,
+            'cost_code_vuid': line.cost_code_vuid,
+            'cost_type_vuid': line.cost_type_vuid,
+            'budget_amount': float(line.budget_amount) if line.budget_amount else None,
+            'notes': line.notes,
+            'status': line.status,
+            'created_at': line.created_at.isoformat() if line.created_at else None,
+            'updated_at': line.updated_at.isoformat() if line.updated_at else None
+        })
+
+    @app.route('/api/project-budget-lines/<vuid>', methods=['DELETE'])
+    def delete_budget_line(vuid):
+        from .models import ProjectBudgetLine
+        line = ProjectBudgetLine.query.get_or_404(vuid)
+        
+        try:
+            db.session.delete(line)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({'message': 'Budget line deleted successfully'})
+
+    # Contract Items endpoints
+    @app.route('/api/project-contracts/<contract_vuid>/items', methods=['GET'])
+    def get_contract_items(contract_vuid):
+        items = ProjectContractItem.query.filter_by(contract_vuid=contract_vuid).all()
+        return jsonify([{
+            'vuid': item.vuid,
+            'contract_vuid': item.contract_vuid,
+            'item_number': item.item_number,
+            'cost_code_vuid': item.cost_code_vuid,
+            'cost_type_vuid': item.cost_type_vuid,
+            'description': item.description,
+            'unit_of_measure': item.unit_of_measure,
+            'quantity': float(item.quantity) if item.quantity else None,
+            'unit_price': float(item.unit_price) if item.unit_price else None,
+            'total_amount': float(item.total_amount) if item.total_amount else None,
+            'specifications': item.specifications,
+            'delivery_location': item.delivery_location,
+            'delivery_date': item.delivery_date.isoformat() if item.delivery_date else None,
+            'warranty_info': item.warranty_info,
+            'notes': item.notes,
+            'status': item.status,
+            'created_at': item.created_at.isoformat() if item.created_at else None,
+            'updated_at': item.updated_at.isoformat() if item.updated_at else None
+        } for item in items])
+
+    @app.route('/api/project-contract-items', methods=['POST'])
+    def create_contract_item():
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['contract_vuid', 'item_number', 'description']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+
+        # Accept total_amount directly from payload
+        total_amount = None
+        if data.get('total_amount') not in [None, '']:
+            try:
+                total_amount = float(data.get('total_amount'))
+            except (TypeError, ValueError):
+                return jsonify({'error': 'Invalid total_amount'}), 400
+
+        # Create new contract item
+        item = ProjectContractItem(
+            contract_vuid=data['contract_vuid'],
+            item_number=data['item_number'],
+            cost_code_vuid=data.get('cost_code_vuid'),
+            cost_type_vuid=data.get('cost_type_vuid'),
+            description=data['description'],
+            unit_of_measure=data.get('unit_of_measure'),
+            quantity=data.get('quantity'),
+            unit_price=data.get('unit_price'),
+            total_amount=total_amount,
+            specifications=data.get('specifications'),
+            delivery_location=data.get('delivery_location'),
+            delivery_date=datetime.strptime(data['delivery_date'], '%Y-%m-%d').date() if data.get('delivery_date') else None,
+            warranty_info=data.get('warranty_info'),
+            notes=data.get('notes'),
+            status=data.get('status', 'active')
+        )
+
+        try:
+            db.session.add(item)
+            db.session.commit()
+            
+            # Update contract total amount
+            contract = ProjectContract.query.get(data['contract_vuid'])
+            if contract:
+                contract_items = ProjectContractItem.query.filter_by(contract_vuid=data['contract_vuid']).all()
+                total = sum(float(item.total_amount or 0) for item in contract_items)
+                contract.contract_amount = total
+                db.session.commit()
+                
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': item.vuid,
+            'contract_vuid': item.contract_vuid,
+            'item_number': item.item_number,
+            'cost_code_vuid': item.cost_code_vuid,
+            'cost_type_vuid': item.cost_type_vuid,
+            'description': item.description,
+            'unit_of_measure': item.unit_of_measure,
+            'quantity': float(item.quantity) if item.quantity else None,
+            'unit_price': float(item.unit_price) if item.unit_price else None,
+            'total_amount': float(item.total_amount) if item.total_amount else None,
+            'specifications': item.specifications,
+            'delivery_location': item.delivery_location,
+            'delivery_date': item.delivery_date.isoformat() if item.delivery_date else None,
+            'warranty_info': item.warranty_info,
+            'notes': item.notes,
+            'status': item.status,
+            'created_at': item.created_at.isoformat() if item.created_at else None,
+            'updated_at': item.updated_at.isoformat() if item.updated_at else None
+        }), 201
+
+    @app.route('/api/project-contract-items/<vuid>', methods=['PUT'])
+    def update_contract_item(vuid):
+        item = ProjectContractItem.query.get_or_404(vuid)
+        data = request.get_json()
+
+        if 'item_number' in data:
+            item.item_number = data['item_number']
+        if 'cost_code_vuid' in data:
+            item.cost_code_vuid = data['cost_code_vuid']
+        if 'cost_type_vuid' in data:
+            item.cost_type_vuid = data['cost_type_vuid']
+        if 'description' in data:
+            item.description = data['description']
+        if 'unit_of_measure' in data:
+            item.unit_of_measure = data['unit_of_measure']
+        if 'quantity' in data:
+            item.quantity = data['quantity']
+        if 'unit_price' in data:
+            item.unit_price = data['unit_price']
+        if 'total_amount' in data and data['total_amount'] not in [None, '']:
+            try:
+                item.total_amount = float(data['total_amount'])
+            except (TypeError, ValueError):
+                return jsonify({'error': 'Invalid total_amount'}), 400
+        if 'specifications' in data:
+            item.specifications = data['specifications']
+        if 'delivery_location' in data:
+            item.delivery_location = data['delivery_location']
+        if 'delivery_date' in data:
+            item.delivery_date = datetime.strptime(data['delivery_date'], '%Y-%m-%d').date() if data['delivery_date'] else None
+        if 'warranty_info' in data:
+            item.warranty_info = data['warranty_info']
+        if 'notes' in data:
+            item.notes = data['notes']
+        if 'status' in data:
+            item.status = data['status']
+
+        # If both quantity and unit price are present, you can still auto-calc unless total_amount explicitly provided
+        if (item.quantity is not None and item.unit_price is not None) and (data.get('total_amount') in [None, '']):
+            try:
+                item.total_amount = float(item.quantity) * float(item.unit_price)
+            except (TypeError, ValueError):
+                pass
+
+        try:
+            db.session.commit()
+            
+            # Update contract total amount
+            contract = ProjectContract.query.get(item.contract_vuid)
+            if contract:
+                contract_items = ProjectContractItem.query.filter_by(contract_vuid=item.contract_vuid).all()
+                total = sum(float(item.total_amount or 0) for item in contract_items)
+                contract.contract_amount = total
+                db.session.commit()
+                
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': item.vuid,
+            'contract_vuid': item.contract_vuid,
+            'item_number': item.item_number,
+            'cost_code_vuid': item.cost_code_vuid,
+            'cost_type_vuid': item.cost_type_vuid,
+            'description': item.description,
+            'unit_of_measure': item.unit_of_measure,
+            'quantity': float(item.quantity) if item.quantity else None,
+            'unit_price': float(item.unit_price) if item.unit_price else None,
+            'total_amount': float(item.total_amount) if item.total_amount else None,
+            'specifications': item.specifications,
+            'delivery_location': item.delivery_location,
+            'delivery_date': item.delivery_date.isoformat() if item.delivery_date else None,
+            'warranty_info': item.warranty_info,
+            'notes': item.notes,
+            'status': item.status,
+            'created_at': item.created_at.isoformat() if item.created_at else None,
+            'updated_at': item.updated_at.isoformat() if item.updated_at else None
+        })
+
+    @app.route('/api/project-contract-items/<vuid>', methods=['DELETE'])
+    def delete_contract_item(vuid):
+        item = ProjectContractItem.query.get_or_404(vuid)
+        contract_vuid = item.contract_vuid
+        
+        try:
+            # Delete associated allocations first
+            ProjectContractItemAllocation.query.filter_by(item_vuid=vuid).delete()
+            db.session.flush()
+            
+            # Delete the contract item
+            db.session.delete(item)
+            db.session.commit()
+            
+            # Update contract total amount
+            contract = ProjectContract.query.get(contract_vuid)
+            if contract:
+                contract_items = ProjectContractItem.query.filter_by(contract_vuid=contract_vuid).all()
+                total = sum(float(item.total_amount or 0) for item in contract_items)
+                contract.contract_amount = total
+                db.session.commit()
+                
+        except Exception as e:
+            db.session.rollback()
+            print(f"Error deleting contract item {vuid}: {str(e)}")
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({'message': 'Contract item deleted successfully'})
+
+    # Contract Item Allocations endpoints
+    @app.route('/api/project-contract-items/<item_vuid>/allocations', methods=['GET'])
+    def get_contract_item_allocations(item_vuid):
+        allocations = ProjectContractItemAllocation.query.filter_by(contract_item_vuid=item_vuid).all()
+        return jsonify([{
+            'vuid': a.vuid,
+            'contract_item_vuid': a.contract_item_vuid,
+            'cost_code_vuid': a.cost_code_vuid,
+            'cost_type_vuid': a.cost_type_vuid,
+            'created_at': a.created_at.isoformat() if a.created_at else None
+        } for a in allocations])
+
+    @app.route('/api/project-contract-items/<item_vuid>/allocations', methods=['POST'])
+    def add_contract_item_allocation(item_vuid):
+        """Add a combined cost code and cost type allocation to a contract item"""
+        item = db.session.get(ProjectContractItem, item_vuid)
+        if not item:
+            return jsonify({'error': 'Project contract item not found'}), 404
+        
+        data = request.get_json()
+        if not data or not data.get('cost_code_vuid') or not data.get('cost_type_vuid'):
+            return jsonify({'error': 'cost_code_vuid and cost_type_vuid are required'}), 400
+        
+        # Validate cost code exists
+        cost_code = db.session.get(CostCode, data['cost_code_vuid'])
+        if not cost_code:
+            return jsonify({'error': 'Cost code not found'}), 404
+        
+        # Validate cost type exists
+        cost_type = db.session.get(CostType, data['cost_type_vuid'])
+        if not cost_type:
+            return jsonify({'error': 'Cost type not found'}), 404
+        
+        try:
+            new_allocation = ProjectContractItemAllocation(
+                contract_item_vuid=item_vuid,
+                cost_code_vuid=data['cost_code_vuid'],
+                cost_type_vuid=data['cost_type_vuid'],
+                notes=data.get('notes', '')
+            )
+            
+            db.session.add(new_allocation)
+            db.session.commit()
+            
+            return jsonify({
+                'vuid': new_allocation.vuid,
+                'contract_item_vuid': new_allocation.contract_item_vuid,
+                'cost_code_vuid': new_allocation.cost_code_vuid,
+                'cost_type_vuid': new_allocation.cost_type_vuid,
+                'created_at': new_allocation.created_at.isoformat() if new_allocation.created_at else None
+            }), 201
+            
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': f'Error adding allocation: {str(e)}'}), 500
+
+    @app.route('/api/project-contract-items/<item_vuid>/allocations', methods=['PUT'])
+    def replace_contract_item_allocations(item_vuid):
+        data = request.get_json() or {}
+        incoming = data.get('allocations', [])
+        # Basic validation
+        for alloc in incoming:
+            if not alloc.get('cost_code_vuid') or not alloc.get('cost_type_vuid'):
+                return jsonify({'error': 'Each allocation requires cost_code_vuid and cost_type_vuid'}), 400
+
+        try:
+            # Delete existing
+            ProjectContractItemAllocation.query.filter_by(contract_item_vuid=item_vuid).delete()
+            db.session.flush()
+            # Insert new
+            for alloc in incoming:
+                db.session.add(ProjectContractItemAllocation(
+                    contract_item_vuid=item_vuid,
+                    cost_code_vuid=alloc['cost_code_vuid'],
+                    cost_type_vuid=alloc['cost_type_vuid']
+                ))
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        # Return updated list
+        allocations = ProjectContractItemAllocation.query.filter_by(contract_item_vuid=item_vuid).all()
+        return jsonify([{
+            'vuid': a.vuid,
+            'contract_item_vuid': a.contract_item_vuid,
+            'cost_code_vuid': a.cost_code_vuid,
+            'cost_type_vuid': a.cost_type_vuid,
+            'created_at': a.created_at.isoformat() if a.created_at else None
+        } for a in allocations])
+
+    @app.route('/api/project-contract-items/allocations/<allocation_vuid>', methods=['DELETE'])
+    def delete_contract_item_allocation(allocation_vuid):
+        """Delete an allocation from a contract item"""
+        allocation = db.session.get(ProjectContractItemAllocation, allocation_vuid)
+        if not allocation:
+            return jsonify({'error': 'Allocation not found'}), 404
+        
+        try:
+            db.session.delete(allocation)
+            db.session.commit()
+            return jsonify({'message': 'Allocation deleted successfully'})
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': f'Error deleting allocation: {str(e)}'}), 500
+
+    # Commitment Items endpoints
+    @app.route('/api/commitments/<commitment_vuid>/items', methods=['GET'])
+    def get_commitment_items(commitment_vuid):
+        from .models import CommitmentItem
+        items = CommitmentItem.query.filter_by(commitment_vuid=commitment_vuid).all()
+        return jsonify([{
+            'vuid': item.vuid,
+            'commitment_vuid': item.commitment_vuid,
+            'item_number': item.item_number,
+            'cost_code_vuid': item.cost_code_vuid,
+            'cost_type_vuid': item.cost_type_vuid,
+            'description': item.description,
+            'unit_of_measure': item.unit_of_measure,
+            'quantity': float(item.quantity) if item.quantity else None,
+            'unit_price': float(item.unit_price) if item.unit_price else None,
+            'total_amount': float(item.total_amount) if item.total_amount else None,
+            'retainage': float(item.retainage) if item.retainage else None,
+            'notes': item.notes,
+            'status': item.status,
+            'created_at': item.created_at.isoformat() if item.created_at else None,
+            'updated_at': item.updated_at.isoformat() if item.updated_at else None
+        } for item in items])
+
+    @app.route('/api/commitment-items', methods=['POST'])
+    def create_commitment_item():
+        from .models import CommitmentItem
+        data = request.get_json()
+        
+        # Validate required fields
+        required_fields = ['commitment_vuid', 'item_number', 'cost_code_vuid', 'cost_type_vuid', 'description']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+
+        # Calculate total amount if quantity and unit price are provided
+        total_amount = None
+        if data.get('quantity') and data.get('unit_price'):
+            total_amount = float(data['quantity']) * float(data['unit_price'])
+
+        # Clean data - convert empty strings to None for optional fields
+        def clean_value(value):
+            return None if value == '' else value
+
+        # Create new commitment item
+        item = CommitmentItem(
+            commitment_vuid=data['commitment_vuid'],
+            item_number=data['item_number'],
+            cost_code_vuid=data['cost_code_vuid'],
+            cost_type_vuid=data['cost_type_vuid'],
+            description=data['description'],
+            unit_of_measure=clean_value(data.get('unit_of_measure')),
+            quantity=clean_value(data.get('quantity')),
+            unit_price=clean_value(data.get('unit_price')),
+            total_amount=total_amount,
+            retainage=clean_value(data.get('retainage')),
+            notes=clean_value(data.get('notes')),
+            status=data.get('status', 'active')
+        )
+
+        try:
+            db.session.add(item)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': item.vuid,
+            'commitment_vuid': item.commitment_vuid,
+            'item_number': item.item_number,
+            'cost_code_vuid': item.cost_code_vuid,
+            'cost_type_vuid': item.cost_type_vuid,
+            'description': item.description,
+            'unit_of_measure': item.unit_of_measure,
+            'quantity': float(item.quantity) if item.quantity else None,
+            'unit_price': float(item.unit_price) if item.unit_price else None,
+            'total_amount': float(item.total_amount) if item.total_amount else None,
+            'retainage': float(item.retainage) if item.retainage else None,
+            'notes': item.notes,
+            'status': item.status,
+            'created_at': item.created_at.isoformat() if item.created_at else None,
+            'updated_at': item.updated_at.isoformat() if item.updated_at else None
+        }), 201
+
+    @app.route('/api/commitment-items/<vuid>', methods=['PUT'])
+    def update_commitment_item(vuid):
+        from .models import CommitmentItem
+        item = CommitmentItem.query.get_or_404(vuid)
+        data = request.get_json()
+
+        # Clean data - convert empty strings to None for optional fields
+        def clean_value(value):
+            return None if value == '' else value
+
+        if 'item_number' in data:
+            item.item_number = data['item_number']
+        if 'cost_code_vuid' in data:
+            item.cost_code_vuid = data['cost_code_vuid']
+        if 'cost_type_vuid' in data:
+            item.cost_type_vuid = data['cost_type_vuid']
+        if 'description' in data:
+            item.description = data['description']
+        if 'unit_of_measure' in data:
+            item.unit_of_measure = clean_value(data['unit_of_measure'])
+        if 'quantity' in data:
+            item.quantity = clean_value(data['quantity'])
+        if 'unit_price' in data:
+            item.unit_price = clean_value(data['unit_price'])
+        if 'retainage' in data:
+            item.retainage = clean_value(data['retainage'])
+        if 'notes' in data:
+            item.notes = clean_value(data['notes'])
+        if 'status' in data:
+            item.status = data['status']
+
+        # Recalculate total amount if quantity or unit price changed
+        if item.quantity and item.unit_price:
+            item.total_amount = float(item.quantity) * float(item.unit_price)
+
+        try:
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({
+            'vuid': item.vuid,
+            'commitment_vuid': item.commitment_vuid,
+            'item_number': item.item_number,
+            'cost_code_vuid': item.cost_code_vuid,
+            'cost_type_vuid': item.cost_type_vuid,
+            'description': item.description,
+            'unit_of_measure': item.unit_of_measure,
+            'quantity': float(item.quantity) if item.quantity else None,
+            'unit_price': float(item.unit_price) if item.unit_price else None,
+            'total_amount': float(item.total_amount) if item.total_amount else None,
+            'retainage': float(item.retainage) if item.retainage else None,
+            'notes': item.notes,
+            'status': item.status,
+            'created_at': item.created_at.isoformat() if item.created_at else None,
+            'updated_at': item.updated_at.isoformat() if item.updated_at else None
+        })
+
+    @app.route('/api/commitment-items/<vuid>', methods=['DELETE'])
+    def delete_commitment_item(vuid):
+        from .models import CommitmentItem
+        item = CommitmentItem.query.get_or_404(vuid)
+        
+        try:
+            db.session.delete(item)
+            db.session.commit()
+        except Exception as e:
+            db.session.rollback()
+            return jsonify({'error': str(e)}), 400
+
+        return jsonify({'message': 'Commitment item deleted successfully'})
