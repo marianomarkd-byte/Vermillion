@@ -678,12 +678,15 @@ def create_ap_invoice_net_entry_preview(invoice):
             total_credits += net_amount
         
         return {
+            'type': 'AP Invoice',
+            'reference_number': invoice.invoice_number,
             'journal_number': f"JE-AP-{invoice.invoice_number}",
             'description': f"AP Invoice {invoice.invoice_number} (Net)",
             'reference_type': 'ap_invoice',
             'reference_vuid': invoice.vuid,
             'project_vuid': invoice.project_vuid,
             'project_number': invoice.project.project_number if invoice.project else None,
+            'project_name': invoice.project.project_name if invoice.project else None,
             'total_amount': net_amount,
             'total_debits': total_debits,
             'total_credits': total_credits,
@@ -744,12 +747,15 @@ def create_ap_invoice_retainage_entry_preview(invoice):
             total_credits += retainage_amount
         
         return {
+            'type': 'Retainage Entry',
+            'reference_number': f"{invoice.invoice_number}-RET",
             'journal_number': f"JE-AP-RET-{invoice.invoice_number}",
             'description': f"AP Invoice {invoice.invoice_number} (Retainage)",
             'reference_type': 'ap_invoice_retainage',
             'reference_vuid': invoice.vuid,
             'project_vuid': invoice.project_vuid,
             'project_number': invoice.project.project_number if invoice.project else None,
+            'project_name': invoice.project.project_name if invoice.project else None,
             'total_amount': retainage_amount,
             'total_debits': total_debits,
             'total_credits': total_credits,
@@ -895,6 +901,7 @@ def create_project_billing_net_entry_preview(billing):
             'reference_vuid': billing.vuid,
             'project_vuid': billing.project_vuid,
             'project_number': billing.project.project_number if billing.project else None,
+            'project_name': billing.project.project_name if billing.project else None,
             'total_amount': net_amount,
             'total_debits': total_debits,
             'total_credits': total_credits,
@@ -942,14 +949,15 @@ def create_project_billing_retainage_entry_preview(billing):
         total_credits += retainage_amount
         
         return {
-            'type': 'Project Billing',
-            'reference_number': billing.billing_number,
+            'type': 'Retainage Entry',
+            'reference_number': f"{billing.billing_number}-RET",
             'journal_number': f"JE-RET-PB-{billing.billing_number}",
             'description': f"Project Billing {billing.billing_number} (Retainage)",
             'reference_type': 'project_billing_retainage',
             'reference_vuid': billing.vuid,
             'project_vuid': billing.project_vuid,
             'project_number': billing.project.project_number if billing.project else None,
+            'project_name': billing.project.project_name if billing.project else None,
             'total_amount': retainage_amount,
             'total_debits': total_debits,
             'total_credits': total_credits,
@@ -1060,12 +1068,15 @@ def create_labor_cost_journal_entry_preview(labor_cost):
         is_balanced = abs(total_debits - total_credits) < 0.01  # Allow for small rounding differences
         
         return {
+            'type': 'Labor Cost',
+            'reference_number': f"{labor_cost.employee_id or 'UNK'}-{labor_cost.payroll_date or 'UNK'}",
             'journal_number': f"JE-LC-{labor_cost.employee_id or 'UNK'}-{labor_cost.payroll_date or 'UNK'}",
             'description': f"Labor Cost - {employee_name}",
             'reference_type': 'labor_cost',
             'reference_vuid': labor_cost.vuid,
             'project_vuid': labor_cost.project_vuid,
             'project_number': labor_cost.project.project_number if labor_cost.project else None,
+            'project_name': labor_cost.project.project_name if labor_cost.project else None,
             'total_amount': amount,
             'total_debits': total_debits,
             'total_credits': total_credits,
@@ -8901,7 +8912,7 @@ def preview_journal_entries_for_period(accounting_period_vuid):
         preview_entries = []
         
         # 1. AP Invoices
-        ap_invoices = APInvoice.query.filter_by(
+        ap_invoices = APInvoice.query.options(db.joinedload(APInvoice.project)).filter_by(
             accounting_period_vuid=accounting_period_vuid,
             status='approved'
         ).all()
@@ -8927,7 +8938,7 @@ def preview_journal_entries_for_period(accounting_period_vuid):
                     preview_entries.append(combined_entry)
         
         # 2. Project Billings
-        project_billings = ProjectBilling.query.filter_by(
+        project_billings = ProjectBilling.query.options(db.joinedload(ProjectBilling.project)).filter_by(
             accounting_period_vuid=accounting_period_vuid,
             status='approved'
         ).all()
@@ -8954,7 +8965,7 @@ def preview_journal_entries_for_period(accounting_period_vuid):
                     preview_entries.append(combined_entry)
         
         # 3. Labor Costs
-        labor_costs = LaborCost.query.filter_by(
+        labor_costs = LaborCost.query.options(db.joinedload(LaborCost.project)).filter_by(
             accounting_period_vuid=accounting_period_vuid,
             status='active'
         ).all()

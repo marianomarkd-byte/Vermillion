@@ -407,14 +407,21 @@ const WIP = () => {
       console.log('Previewing journal entries for period:', selectedPeriod);
       
       // Call the preview API endpoint
-      const response = await axios.post(`${baseURL}/api/journal-entries/preview`, {
-        accounting_period_vuid: selectedPeriod
-      });
+      const response = await axios.get(`${baseURL}/api/journal-entries/preview/${selectedPeriod}`);
       
       console.log('Preview response:', response.data);
       
       if (response.data.success) {
-        setPreviewData(response.data);
+        // Transform the response to match expected structure
+        const transformedData = {
+          ...response.data,
+          preview_entries: response.data.journal_entries,
+          accounting_period: {
+            month: response.data.accounting_period?.month || new Date().getMonth() + 1,
+            year: response.data.accounting_period?.year || new Date().getFullYear()
+          }
+        };
+        setPreviewData(transformedData);
         setShowPreviewModal(true);
       } else {
         alert(`Error previewing journal entries: ${response.data.error}`);
