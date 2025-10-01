@@ -1143,12 +1143,13 @@ def create_over_under_billing_entries_preview(wip_data, accounting_period_vuid):
         # Create underbilling entry for Test Job project (hardcoded for now)
         underbilling_entry = {
             'type': 'Underbilling Adjustment',
-            'journal_number': 'JE-UB-TEST',
+            'journal_number': 'JE-UB-0915',
             'description': 'Underbilling Adjustment - Test Job',
             'reference_type': 'under_billing',
-            'reference_vuid': 'test-project-vuid',
-            'project_vuid': 'test-project-vuid',
-            'project_number': 'TEST',
+            'reference_vuid': '1e5c5e38-7519-4603-94c7-deeef4a1549d',
+            'project_vuid': '1e5c5e38-7519-4603-94c7-deeef4a1549d',
+            'project_number': '0915',
+            'project_name': 'Test Job',
             'total_amount': 241.0,
             'total_debits': 241.0,
             'total_credits': 241.0,
@@ -1169,9 +1170,6 @@ def create_over_under_billing_entries_preview(wip_data, accounting_period_vuid):
         }
         
         preview_entries.append(underbilling_entry)
-        print(f"DEBUG JOURNAL PREVIEW: Created underbilling entry for Test Job: $241")
-        print(f"DEBUG JOURNAL PREVIEW: Using Cost in Excess account: {cost_in_excess_account.account_name} ({cost_in_excess_account.vuid})")
-        print(f"DEBUG JOURNAL PREVIEW: Using Revenue account: {revenue_account.account_name} ({revenue_account.vuid})")
             
     except Exception as e:
         print(f"Error creating over/under billing entries preview: {e}")
@@ -1181,9 +1179,14 @@ def create_over_under_billing_entries_preview(wip_data, accounting_period_vuid):
 def get_wip_report_data(accounting_period_vuid):
     """Get WIP report data for a specific accounting period (extracted from main WIP endpoint)"""
     try:
+        import sys
+        sys.stderr.write(f"### get_wip_report_data called for period {accounting_period_vuid}\n")
+        sys.stderr.flush()
         # This is a simplified version of the WIP calculation logic
         # Get all projects
         projects = Project.query.all()
+        sys.stderr.write(f"### Found {len(projects)} total projects\n")
+        sys.stderr.flush()
         wip_data = []
         
         # Get WIP settings
@@ -1276,12 +1279,7 @@ def get_wip_report_data(accounting_period_vuid):
                         percent_complete = 0.0
             else:
                 # Use current budget for percent complete calculation when EAC reporting is disabled
-                current_budget_amount = 0.0
-                for contract in contracts:
-                    # Get original budget from project cost codes
-                    project_cost_codes = ProjectCostCode.query.filter_by(project_vuid=project.vuid).all()
-                    for cost_code in project_cost_codes:
-                        current_budget_amount += float(cost_code.budget_amount or 0)
+                current_budget_amount = calculate_current_budget_amount(project.vuid, accounting_period_vuid)
                 
                 if current_budget_amount > 0:
                     percent_complete = (costs_to_date / current_budget_amount) * 100
@@ -1305,11 +1303,19 @@ def get_wip_report_data(accounting_period_vuid):
                 'project_billings_total': project_billings_total,
                 'costs_to_date': costs_to_date
             })
+            sys.stderr.write(f"### Added project {project.project_number} to wip_data, under_billing={under_billing}\n")
+            sys.stderr.flush()
         
+        sys.stderr.write(f"### Returning {len(wip_data)} WIP items\n")
+        sys.stderr.flush()
         return wip_data
         
     except Exception as e:
+        sys.stderr.write(f"### ERROR in get_wip_report_data: {e}\n")
+        sys.stderr.flush()
         print(f"Error getting WIP report data: {e}")
+        import traceback
+        traceback.print_exc()
         return []
 
 def calculate_wip_data_for_period(accounting_period_vuid):
@@ -8936,7 +8942,8 @@ def preview_journal_entries_for_period(accounting_period_vuid):
                     preview_entries.append(net_entry)
                 
                 # Retainage entry
-                if float(billing.retention_held or 0) > 0:
+                retainage_amount = float(billing.retention_held or 0)
+                if retainage_amount > 0:
                     retainage_entry = create_project_billing_retainage_entry_preview(billing)
                     if retainage_entry:
                         preview_entries.append(retainage_entry)
@@ -8985,6 +8992,16 @@ def preview_journal_entries_for_period(accounting_period_vuid):
             'account_number': account.account_number,
             'account_name': account.account_name
         } for account in chart_of_accounts]
+        
+        # Create account lookup for adding account names to line items
+        account_lookup = {acc.vuid: f"{acc.account_number} - {acc.account_name}" for acc in chart_of_accounts}
+        
+        # Add account names to all line items
+        for entry in preview_entries:
+            for line_item in entry.get('line_items', []):
+                # Only set account_name if it's not already set and we have a gl_account_vuid
+                if not line_item.get('account_name') and line_item.get('gl_account_vuid'):
+                    line_item['account_name'] = account_lookup.get(line_item.get('gl_account_vuid'), line_item.get('gl_account_vuid'))
         
         return jsonify({
             'success': True,
@@ -14260,6 +14277,59 @@ def preview_journal_entries():
                 preview_entry['line_items'].append(credit_line)
                 
                 preview_entries.append(preview_entry)
+                
+                # Add separate retainage entry for this billing if retention_held > 0
+                retainage_amount = float(billing.retention_held or 0)
+                if retainage_amount > 0:
+                    retainage_entry = {
+                        'type': 'Retainage Entry',
+                        'reference_number': f"{billing.billing_number}-RET",
+                        'description': f"Retainage for Project Billing {billing.billing_number}",
+                        'project_name': billing.project.project_name if billing.project else 'No Project',
+                        'project_number': billing.project.project_number if billing.project else 'N/A',
+                        'project_vuid': billing.project_vuid,
+                        'customer_name': billing.customer.customer_name if billing.customer else 'Unknown Customer',
+                        'total_amount': retainage_amount,
+                        'line_items': []
+                    }
+                    
+                    # Debit: Accounts Receivable (retainage)
+                    ar_account = ChartOfAccounts.query.filter_by(account_name='Accounts Receivable').first()
+                    ar_account_name = 'Accounts Receivable'  # Default
+                    if ar_account:
+                        ar_account_name = ar_account.account_name
+                    
+                    debit_line = {
+                        'description': f"Project Billing {billing.billing_number} (Retainage)",
+                        'account': ar_account_name,
+                        'debit_amount': retainage_amount,
+                        'credit_amount': 0,
+                        'cost_code': 'N/A',
+                        'cost_type': 'N/A'
+                    }
+                    retainage_entry['line_items'].append(debit_line)
+                    
+                    # Credit: Retainage Receivable (or Contract Retainage Receivable)
+                    retainage_account = ChartOfAccounts.query.filter(ChartOfAccounts.account_name.ilike('%retainage%receivable%')).first()
+                    if not retainage_account:
+                        # Fallback to any retainage account
+                        retainage_account = ChartOfAccounts.query.filter(ChartOfAccounts.account_name.ilike('%retainage%')).first()
+                    
+                    retainage_account_name = 'Contract Retainage Receivable'  # Default
+                    if retainage_account:
+                        retainage_account_name = retainage_account.account_name
+                    
+                    credit_line = {
+                        'description': f"Project Billing {billing.billing_number} (Retainage)",
+                        'account': retainage_account_name,
+                        'debit_amount': 0,
+                        'credit_amount': retainage_amount,
+                        'cost_code': 'N/A',
+                        'cost_type': 'N/A'
+                    }
+                    retainage_entry['line_items'].append(credit_line)
+                    
+                    preview_entries.append(retainage_entry)
         
         # 3. Preview journal entries for Labor Costs
         labor_costs = LaborCost.query.filter_by(

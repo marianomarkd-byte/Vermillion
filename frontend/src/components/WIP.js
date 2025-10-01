@@ -1203,7 +1203,7 @@ const WIP = () => {
                               {entry.line_items[0].debit_amount > 0 ? (
                                 <div>
                                   <div className="font-medium">{formatCurrency(entry.line_items[0].debit_amount)}</div>
-                                  <div className="text-xs text-gray-500">{entry.line_items[0].account}</div>
+                                  <div className="text-xs text-gray-500">{entry.line_items[0].account_name}</div>
                                 </div>
                               ) : '-'}
                             </td>
@@ -1211,7 +1211,7 @@ const WIP = () => {
                               {entry.line_items[0].credit_amount > 0 ? (
                                 <div>
                                   <div className="font-medium">{formatCurrency(entry.line_items[0].credit_amount)}</div>
-                                  <div className="text-xs text-gray-500">{entry.line_items[0].account}</div>
+                                  <div className="text-xs text-gray-500">{entry.line_items[0].account_name}</div>
                                 </div>
                               ) : '-'}
                             </td>
@@ -1223,7 +1223,7 @@ const WIP = () => {
                                 {lineItem.debit_amount > 0 ? (
                                   <div>
                                     <div className="font-medium">{formatCurrency(lineItem.debit_amount)}</div>
-                                    <div className="text-xs text-gray-500">{lineItem.account}</div>
+                                    <div className="text-xs text-gray-500">{lineItem.account_name}</div>
                                   </div>
                                 ) : '-'}
                               </td>
@@ -1231,7 +1231,7 @@ const WIP = () => {
                                 {lineItem.credit_amount > 0 ? (
                                   <div>
                                     <div className="font-medium">{formatCurrency(lineItem.credit_amount)}</div>
-                                    <div className="text-xs text-gray-500">{lineItem.account}</div>
+                                    <div className="text-xs text-gray-500">{lineItem.account_name}</div>
                                   </div>
                                 ) : '-'}
                               </td>

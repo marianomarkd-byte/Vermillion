@@ -329,7 +329,7 @@ const ProjectDetails = () => {
       currentBudgetAmount: wipEntry?.current_budget_amount || 0,
       costsToDate: wipEntry?.costs_to_date || 0,
       projectBillings: wipEntry?.project_billings || 0,
-      revenueRecognized: wipEntry ? ((wipEntry.percent_complete || 0) / 100) * (wipEntry.total_contract_amount || 0) : 0,
+      revenueRecognized: wipEntry?.revenue_recognized || 0,  // Use the value directly from WIP API, don't recalculate
       apInvoices: { count: filteredAPInvoices.length, total: apInvoicesTotal },
       laborCosts: { count: filteredLaborCosts.length, total: laborCostsTotal },
       projectExpenses: { count: filteredProjectExpenses.length, total: projectExpensesTotal }
