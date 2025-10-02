@@ -31,6 +31,7 @@ const WIP = () => {
   const [selectedPeriodForPCO, setSelectedPeriodForPCO] = useState(null);
   const [pendingChangeOrders, setPendingChangeOrders] = useState([]);
   const [pcoLoading, setPcoLoading] = useState(false);
+  const [postingLoading, setPostingLoading] = useState({});
 
   useEffect(() => {
     console.log('WIP component mounted, calling fetchInitialData...');
@@ -113,6 +114,84 @@ const WIP = () => {
     } catch (err) {
       console.error('Error removing pending change order:', err);
       alert('Failed to remove pending change order from forecast: ' + (err.response?.data?.error || err.message));
+    }
+  };
+
+  const handlePostAllOverUnderBilling = async () => {
+    if (!selectedPeriod) {
+      alert('Please select an accounting period first');
+      return;
+    }
+
+    // Find all projects with over/under billing
+    const projectsWithOverUnderBilling = (wipData || []).filter(item => 
+      (item.over_billing || 0) > 0 || (item.under_billing || 0) > 0
+    );
+
+    if (projectsWithOverUnderBilling.length === 0) {
+      alert('No projects have over/under billing amounts to post');
+      return;
+    }
+
+    const totalOverBilling = projectsWithOverUnderBilling.reduce((sum, item) => sum + (item.over_billing || 0), 0);
+    const totalUnderBilling = projectsWithOverUnderBilling.reduce((sum, item) => sum + (item.under_billing || 0), 0);
+    
+    if (!window.confirm(`Are you sure you want to post over/under billing adjustments for ${projectsWithOverUnderBilling.length} projects?\n\nTotal Overbilled: ${formatCurrency(totalOverBilling)}\nTotal Underbilled: ${formatCurrency(totalUnderBilling)}`)) {
+      return;
+    }
+
+    setPostingLoading(prev => ({ ...prev, 'all': true }));
+
+    try {
+      const baseURL = 'http://localhost:5001';
+      let successCount = 0;
+      let errorCount = 0;
+
+      // Post each project's over/under billing
+      for (const project of projectsWithOverUnderBilling) {
+        try {
+          // Post over billing if exists
+          if ((project.over_billing || 0) > 0) {
+            await axios.post(`${baseURL}/api/posted-records/post`, {
+              transaction_type: 'over_under_billing',
+              project_vuid: project.project_vuid,
+              accounting_period_vuid: selectedPeriod,
+              over_under_amount: project.over_billing,
+              posted_by: 'User'
+            });
+            successCount++;
+          }
+
+          // Post under billing if exists
+          if ((project.under_billing || 0) > 0) {
+            await axios.post(`${baseURL}/api/posted-records/post`, {
+              transaction_type: 'over_under_billing',
+              project_vuid: project.project_vuid,
+              accounting_period_vuid: selectedPeriod,
+              over_under_amount: -project.under_billing,
+              posted_by: 'User'
+            });
+            successCount++;
+          }
+        } catch (err) {
+          console.error(`Error posting for project ${project.project_number}:`, err);
+          errorCount++;
+        }
+      }
+      
+      // Refresh WIP data to show updated posted status
+      fetchWipData(selectedPeriod);
+      
+      if (errorCount === 0) {
+        alert(`Successfully posted ${successCount} over/under billing adjustments`);
+      } else {
+        alert(`Posted ${successCount} adjustments successfully, ${errorCount} failed`);
+      }
+    } catch (err) {
+      console.error('Error posting over/under billing:', err);
+      alert('Failed to post over/under billing adjustments: ' + (err.response?.data?.error || err.message));
+    } finally {
+      setPostingLoading(prev => ({ ...prev, 'all': false }));
     }
   };
 
@@ -407,7 +486,7 @@ const WIP = () => {
       console.log('Previewing journal entries for period:', selectedPeriod);
       
       // Call the preview API endpoint
-      const response = await axios.get(`${baseURL}/api/journal-entries/preview/${selectedPeriod}`);
+      const response = await axios.get(`${baseURL}/api/journal-entries/preview-from-posted/${selectedPeriod}`);
       
       console.log('Preview response:', response.data);
       
@@ -591,6 +670,25 @@ const WIP = () => {
               ) : (
                 <>
                   👁️ Preview Journal Entries
+                </>
+              )}
+            </button>
+            <button
+              onClick={handlePostAllOverUnderBilling}
+              disabled={postingLoading['all']}
+              className="bg-orange-600 hover:bg-orange-700 disabled:bg-gray-400 text-white font-semibold py-3 px-8 rounded-lg transition-colors shadow-lg disabled:cursor-not-allowed"
+            >
+              {postingLoading['all'] ? (
+                <>
+                  <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-white inline" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none"/>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"/>
+                  </svg>
+                  Posting...
+                </>
+              ) : (
+                <>
+                  📊 Post All Over/Under Billing
                 </>
               )}
             </button>

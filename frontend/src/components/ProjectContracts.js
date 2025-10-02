@@ -276,6 +276,24 @@ const ProjectContracts = () => {
     }
   }, [projectCostCodes]);
 
+  // Fetch budget lines when project is selected in create form
+  useEffect(() => {
+    if (formData.project_vuid && showCreateForm) {
+      axios
+        .get(`${baseURL}/api/projects/${formData.project_vuid}/budget-lines`)
+        .then((res) => {
+          setProjectBudgetLines(res.data || []);
+          console.log(`Fetched ${res.data?.length || 0} budget lines for project ${formData.project_vuid}`);
+        })
+        .catch((err) => {
+          console.warn('Failed to fetch project budget lines for create form:', err);
+          setProjectBudgetLines([]);
+        });
+    } else if (!formData.project_vuid) {
+      setProjectBudgetLines([]);
+    }
+  }, [formData.project_vuid, showCreateForm]);
+
   // Close dropdowns when clicking outside
   useEffect(() => {
     const handleClickOutside = (event) => {

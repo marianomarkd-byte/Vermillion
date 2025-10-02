@@ -42,16 +42,26 @@ const ProjectBudgets = () => {
   const [selectedBudget, setSelectedBudget] = useState(null);
   
   // Form data
-  const [formData, setFormData] = useState({
-    project_vuid: '',
-    accounting_period_vuid: '',
-    description: '',
-    budget_type: 'original',
-    budget_date: '',
-    status: 'active',
-    finalized: false
-  });
+  // Initialize form data with project context from URL if available
+  const getInitialFormData = () => {
+    const searchParams = new URLSearchParams(location.search);
+    const projectVuid = searchParams.get('project');
+    
+    return {
+      project_vuid: projectVuid || '',
+      accounting_period_vuid: '',
+      description: '',
+      budget_type: 'original',
+      budget_date: '',
+      status: 'active',
+      finalized: false
+    };
+  };
+
+  // Form data state
+  const [formData, setFormData] = useState(getInitialFormData());
   
+
   const [lineFormData, setLineFormData] = useState({
     budget_vuid: '',
     cost_code_vuid: '',
@@ -126,16 +136,24 @@ const ProjectBudgets = () => {
       const projectVuid = searchParams.get('project');
       const budgetVuid = searchParams.get('budget');
       
+      // Only process URL parameters if projects are loaded
+      if (projects.length === 0) {
+        return;
+      }
+      
       if (projectVuid) {
+        // Check if the project exists in the loaded projects
+        const foundProject = projects.find(p => p.vuid === projectVuid);
+        
+        if (!foundProject) {
+          return; // Don't proceed if project doesn't exist
+        }
+        
         // Pre-filter budgets for this project
         setProjectFilter(projectVuid);
         
         // If there's also a create parameter, open the create form
         if (searchParams.get('create') === 'true') {
-          setFormData(prev => ({
-            ...prev,
-            project_vuid: projectVuid
-          }));
           setShowCreateForm(true);
         }
         
@@ -172,7 +190,7 @@ const ProjectBudgets = () => {
     };
 
     handleUrlParams();
-  }, [location.search]);
+  }, [location.search, projects]); // Include projects to ensure it runs when projects are loaded
 
   // Handle navigation state for viewing budgets and creating for specific projects (legacy support)
   useEffect(() => {
@@ -367,6 +385,15 @@ const ProjectBudgets = () => {
     if (formData.project_vuid && projects.length > 0) {
       const projectExists = projects.find(p => p.vuid === formData.project_vuid);
       if (!projectExists) {
+        // Check if this project is from URL parameters - if so, don't clear it
+        const searchParams = new URLSearchParams(location.search);
+        const urlProjectVuid = searchParams.get('project');
+        
+        if (formData.project_vuid === urlProjectVuid) {
+          console.log('ProjectBudgets: Project from URL not found in loaded projects, but preserving URL context');
+          return; // Don't clear the project if it's from URL parameters
+        }
+        
         // Reset the form if the selected project no longer exists
         setFormData(prev => ({
           ...prev,
@@ -448,12 +475,19 @@ const ProjectBudgets = () => {
     
     // Find the WIP entry for this project
     const wipEntry = wipData.find(entry => entry.project_vuid === budget.project_vuid);
-    if (wipEntry) {
-      return wipEntry.current_budget_amount || 0;
+    if (wipEntry && wipEntry.current_budget_amount > 0) {
+      return wipEntry.current_budget_amount;
     }
     
-    // Fallback to original budget amount if no WIP data
-    return getOriginalBudgetAmount(budget.vuid);
+    // Fallback: Get budget amount from the budget lines in the database
+    // This is more reliable than summing budgetLines array which might be empty
+    const budgetLinesForThisBudget = budgetLines.filter(line => line.budget_vuid === budget.vuid);
+    if (budgetLinesForThisBudget.length > 0) {
+      return budgetLinesForThisBudget.reduce((sum, line) => sum + (parseFloat(line.budget_amount) || 0), 0);
+    }
+    
+    // Final fallback: return 0 if no data available
+    return 0;
   };
 
   // Fetch external change order lines for a project
@@ -587,10 +621,16 @@ const ProjectBudgets = () => {
         // Get the newly created budget to show its lines form
         const newBudget = response.data;
         if (newBudget && newBudget.vuid) {
+          console.log('Budget created successfully:', newBudget);
+          
           // Set the newly created budget as selected and show lines form
+          // Use a single state update to avoid race conditions
           setSelectedBudget(newBudget);
           setShowLinesForm(true);
           setShowCreateForm(false);
+          
+          console.log('ProjectBudgets: State updated - selectedBudget:', newBudget.vuid, 'showLinesForm: true, showCreateForm: false');
+          console.log('ProjectBudgets: About to set lineFormData with budget_vuid:', newBudget.vuid);
           
           // Pre-populate the line form with the new budget's VUID
           setLineFormData(prev => ({
@@ -604,7 +644,23 @@ const ProjectBudgets = () => {
           // Show success message
           setSuccessMessage(`Budget "${newBudget.description}" created successfully! Now add your budget lines below.`);
           setError(''); // Clear any previous errors
-          return; // Don't call resetForm yet, let user add budget lines
+          
+          // Don't call resetForm() here as it would hide the lines form
+          // Just reset the form data without changing the UI state
+          // Preserve the project context from URL parameters
+          const searchParams = new URLSearchParams(location.search);
+          const urlProjectVuid = searchParams.get('project');
+          setFormData({
+            project_vuid: urlProjectVuid || '', // Preserve project context from URL
+            accounting_period_vuid: '',
+            description: '',
+            budget_type: 'original',
+            budget_date: new Date().toISOString().split('T')[0],
+            status: 'active',
+            finalized: false
+          });
+          setEditingBudget(null);
+          return; // Don't call resetForm again below
         }
       }
       
@@ -699,8 +755,12 @@ const ProjectBudgets = () => {
       defaultAccountingPeriod = accountingPeriods[0].vuid;
     }
     
+    // Preserve project context from URL when resetting
+    const searchParams = new URLSearchParams(location.search);
+    const urlProjectVuid = searchParams.get('project');
+    
     setFormData({
-      project_vuid: '',
+      project_vuid: urlProjectVuid || '',
       accounting_period_vuid: defaultAccountingPeriod,
       description: '',
       budget_type: 'original',
@@ -1844,7 +1904,12 @@ const ProjectBudgets = () => {
               </button>
               <button
                 type="submit"
-                className="bg-gray-800 hover:bg-gray-900 text-white font-semibold py-3 px-8 rounded-lg text-lg transition-all duration-200 transform hover:scale-105 shadow-lg"
+                disabled={showLinesForm}
+                className={`font-semibold py-3 px-8 rounded-lg text-lg transition-all duration-200 transform hover:scale-105 shadow-lg ${
+                  showLinesForm 
+                    ? 'bg-gray-400 text-gray-600 cursor-not-allowed' 
+                    : 'bg-gray-800 hover:bg-gray-900 text-white'
+                }`}
               >
                 {editingBudget ? 'Update Budget' : 'Create Budget'}
               </button>

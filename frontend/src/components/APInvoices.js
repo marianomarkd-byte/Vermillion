@@ -2,9 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { useLocation } from 'react-router-dom';
 
 const APInvoices = () => {
+  console.log('AP Invoices component rendered');
   const location = useLocation();
-  const searchParams = new URLSearchParams(location.search);
-  const projectVuid = searchParams.get('project');
   
   const [invoices, setInvoices] = useState([]);
   const [vendors, setVendors] = useState([]);
@@ -21,7 +20,7 @@ const APInvoices = () => {
   const [createFormData, setCreateFormData] = useState({
     invoice_number: '',
     vendor_vuid: '',
-    project_vuid: projectVuid || '',
+    project_vuid: '',
     commitment_vuid: '',
     invoice_date: new Date().toISOString().split('T')[0],
     due_date: '',
@@ -46,7 +45,7 @@ const APInvoices = () => {
   const [creating, setCreating] = useState(false);
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
-  const [projectFilter, setProjectFilter] = useState(projectVuid || '');
+  const [projectFilter, setProjectFilter] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage] = useState(10);
   
@@ -76,7 +75,10 @@ const APInvoices = () => {
   const [loadingInvoices, setLoadingInvoices] = useState(false);
   const [integrations, setIntegrations] = useState([]);
   
-
+  // Posting state
+  const [postingLoading, setPostingLoading] = useState(false);
+  const [selectedInvoicesForPosting, setSelectedInvoicesForPosting] = useState(new Set());
+  const [postedInvoices, setPostedInvoices] = useState(new Set());
 
   const baseURL = 'http://localhost:5001';
 
@@ -210,20 +212,37 @@ const APInvoices = () => {
     fetchData();
   }, []);
 
-  // Pre-populate project if provided in URL
+  // Handle URL parameters for project context (simplified)
   useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const projectVuid = searchParams.get('project');
+    
     if (projectVuid) {
-      setCreateFormData(prev => ({
-        ...prev,
-        project_vuid: projectVuid
-      }));
+      // Set project filter immediately if we have a project VUID
       setProjectFilter(projectVuid);
-      // Fetch budget lines for the pre-selected project
-      fetchProjectBudgetLines(projectVuid);
-      // Fetch project-specific cost codes for the pre-selected project
-      fetchProjectCostCodes(projectVuid);
     }
-  }, [projectVuid]);
+  }, [location.search]);
+
+  // Handle project context when projects are loaded
+  useEffect(() => {
+    const searchParams = new URLSearchParams(location.search);
+    const projectVuid = searchParams.get('project');
+    
+    if (projectVuid && projects.length > 0) {
+      const project = projects.find(p => p.vuid === projectVuid);
+      if (project) {
+        setCreateFormData(prev => ({
+          ...prev,
+          project_vuid: projectVuid
+        }));
+        setProjectFilter(projectVuid);
+        // Fetch budget lines for the pre-selected project
+        fetchProjectBudgetLines(projectVuid);
+        // Fetch project-specific cost codes for the pre-selected project
+        fetchProjectCostCodes(projectVuid);
+      }
+    }
+  }, [projects]);
 
   useEffect(() => {
     console.log('AP Invoices - invoices state changed:', invoices);
@@ -235,30 +254,54 @@ const APInvoices = () => {
     console.log('AP Invoices - procoreInvoices state length:', procoreInvoices.length);
   }, [procoreInvoices]);
 
+  // Fetch posted invoices to determine posting status
+  const fetchPostedInvoices = async (periods = accountingPeriods) => {
+    try {
+      // Check all accounting periods, not just the open one
+      const allPostedVUIDs = new Set();
+      
+      console.log('fetchPostedInvoices called with periods:', periods);
+      
+      for (const period of periods) {
+        const response = await fetch(`${baseURL}/api/posted-records/${period.vuid}`);
+        if (response.ok) {
+          const data = await response.json();
+          const postedRecords = data.posted_records || [];
+          const apInvoiceVUIDs = postedRecords
+            .filter(record => record.transaction_type === 'ap_invoice')
+            .map(record => record.transaction_vuid);
+          
+          apInvoiceVUIDs.forEach(vuid => allPostedVUIDs.add(vuid));
+        }
+      }
+      
+      setPostedInvoices(allPostedVUIDs);
+      console.log('Posted AP invoices across all periods:', Array.from(allPostedVUIDs));
+    } catch (error) {
+      console.error('Error fetching posted invoices:', error);
+    }
+  };
+
   const fetchData = async () => {
+    console.log('AP Invoices fetchData called');
     try {
       setLoading(true);
-      const [
-        invoicesRes,
-        vendorsRes,
-        projectsRes,
-        commitmentsRes,
-        costCodesRes,
-        costTypesRes,
-        accountingPeriodsRes,
-        integrationsRes,
-        projectBudgetsRes
-      ] = await Promise.all([
-        fetch(`${baseURL}/api/ap-invoices`),
-        fetch(`${baseURL}/api/vendors`),
-        fetch(`${baseURL}/api/projects`),
-        fetch(`${baseURL}/api/project-commitments`),
-        fetch(`${baseURL}/api/cost-codes`),
-        fetch(`${baseURL}/api/cost-types`),
-        fetch(`${baseURL}/api/accounting-periods/open`),
-        fetch(`${baseURL}/api/integrations`),
-        fetch(`${baseURL}/api/project-budgets`)
-      ]);
+      
+      // Fetch data with error handling for each endpoint
+      const fetchWithFallback = async (url, fallback = []) => {
+        try {
+          const response = await fetch(url);
+          if (response.ok) {
+            return await response.json();
+          } else {
+            console.warn(`Failed to fetch ${url}:`, response.status);
+            return fallback;
+          }
+        } catch (error) {
+          console.warn(`Error fetching ${url}:`, error);
+          return fallback;
+        }
+      };
 
       const [
         invoicesData,
@@ -271,19 +314,25 @@ const APInvoices = () => {
         integrationsData,
         projectBudgetsData
       ] = await Promise.all([
-        invoicesRes.json(),
-        vendorsRes.json(),
-        projectsRes.json(),
-        commitmentsRes.json(),
-        costCodesRes.json(),
-        costTypesRes.json(),
-        accountingPeriodsRes.json(),
-        integrationsRes.json(),
-        projectBudgetsRes.json()
+        fetchWithFallback(`${baseURL}/api/ap-invoices`, []),
+        fetchWithFallback(`${baseURL}/api/vendors`, []),
+        fetchWithFallback(`${baseURL}/api/projects`, []),
+        fetchWithFallback(`${baseURL}/api/project-commitments`, []),
+        fetchWithFallback(`${baseURL}/api/cost-codes`, []),
+        fetchWithFallback(`${baseURL}/api/cost-types`, []),
+        fetchWithFallback(`${baseURL}/api/accounting-periods/open`, []),
+        fetchWithFallback(`${baseURL}/api/integrations`, []),
+        fetchWithFallback(`${baseURL}/api/project-budgets`, [])
       ]);
 
       console.log('AP Invoices fetchData - invoicesData:', invoicesData);
       console.log('AP Invoices fetchData - invoicesData length:', invoicesData.length);
+      console.log('AP Invoices fetchData - vendorsData:', vendorsData);
+      console.log('AP Invoices fetchData - vendorsData length:', vendorsData.length);
+      console.log('AP Invoices fetchData - projectsData:', projectsData);
+      console.log('AP Invoices fetchData - projectsData length:', projectsData.length);
+      console.log('AP Invoices fetchData - accountingPeriodsData:', accountingPeriodsData);
+      console.log('AP Invoices fetchData - accountingPeriodsData length:', accountingPeriodsData.length);
 
       setInvoices(invoicesData);
       setVendors(vendorsData);
@@ -315,6 +364,9 @@ const APInvoices = () => {
       console.log('AP Invoices fetchData - projectBudgetsData length:', projectBudgetsData.length);
       
       setLoading(false);
+      
+      // Fetch posted invoices after main data is loaded
+      await fetchPostedInvoices(accountingPeriodsData);
     } catch (error) {
       console.error('Error fetching data:', error);
       setLoading(false);
@@ -326,6 +378,113 @@ const APInvoices = () => {
     await fetchData();
   };
 
+  // Handle invoice selection for posting
+  const handleInvoiceSelectionForPosting = (invoiceVuid, isSelected) => {
+    const newSelection = new Set(selectedInvoicesForPosting);
+    if (isSelected) {
+      newSelection.add(invoiceVuid);
+    } else {
+      newSelection.delete(invoiceVuid);
+    }
+    setSelectedInvoicesForPosting(newSelection);
+  };
+
+  // Handle select all invoices (excluding already posted ones)
+  const handleSelectAllInvoices = () => {
+    const filteredInvoices = projectFilter 
+      ? invoices.filter(invoice => invoice.project_vuid === projectFilter)
+      : invoices;
+    
+    // Only consider non-posted invoices for selection
+    const selectableInvoices = filteredInvoices.filter(invoice => !postedInvoices.has(invoice.vuid));
+    const selectableVUIDs = new Set(selectableInvoices.map(invoice => invoice.vuid));
+    
+    // Check if all selectable invoices are currently selected
+    const allSelectableSelected = selectableVUIDs.size > 0 && 
+      Array.from(selectableVUIDs).every(vuid => selectedInvoicesForPosting.has(vuid));
+    
+    if (allSelectableSelected) {
+      // Deselect all selectable invoices
+      const newSelection = new Set(selectedInvoicesForPosting);
+      selectableVUIDs.forEach(vuid => newSelection.delete(vuid));
+      setSelectedInvoicesForPosting(newSelection);
+    } else {
+      // Select all selectable invoices
+      const newSelection = new Set(selectedInvoicesForPosting);
+      selectableVUIDs.forEach(vuid => newSelection.add(vuid));
+      setSelectedInvoicesForPosting(newSelection);
+    }
+  };
+
+  // Post selected AP invoices to the posting system
+  const handlePostSelectedInvoices = async () => {
+    try {
+      setPostingLoading(true);
+      
+      // Get the current open accounting period
+      const openPeriod = accountingPeriods.find(p => p.status === 'open');
+      if (!openPeriod) {
+        alert('No open accounting period found. Please open an accounting period first.');
+        return;
+      }
+
+      if (selectedInvoicesForPosting.size === 0) {
+        alert('No invoices selected for posting.');
+        return;
+      }
+
+      // Get selected invoices
+      const invoicesToPost = invoices.filter(invoice => 
+        selectedInvoicesForPosting.has(invoice.vuid)
+      );
+
+      let postedCount = 0;
+      let errorCount = 0;
+
+      for (const invoice of invoicesToPost) {
+        try {
+          const response = await fetch(`${baseURL}/api/posted-records/post`, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify({
+              transaction_type: 'ap_invoice',
+              transaction_vuid: invoice.vuid,
+              accounting_period_vuid: openPeriod.vuid
+            })
+          });
+
+          if (response.ok) {
+            postedCount++;
+          } else {
+            console.error(`Failed to post invoice ${invoice.invoice_number}:`, await response.text());
+            errorCount++;
+          }
+        } catch (error) {
+          console.error(`Error posting invoice ${invoice.invoice_number}:`, error);
+          errorCount++;
+        }
+      }
+
+      if (postedCount > 0) {
+        alert(`Successfully posted ${postedCount} AP invoice(s).${errorCount > 0 ? ` ${errorCount} failed.` : ''}`);
+        // Clear selection and refresh data
+        setSelectedInvoicesForPosting(new Set());
+        await fetchData();
+        // Refresh posted invoices status
+        await fetchPostedInvoices(accountingPeriods);
+      } else {
+        alert(`Failed to post any AP invoices. ${errorCount} error(s) occurred.`);
+      }
+
+    } catch (error) {
+      console.error('Error posting AP invoices:', error);
+      alert('Error posting AP invoices. Please try again.');
+    } finally {
+      setPostingLoading(false);
+    }
+  };
 
 
   const formatCurrency = (value) => {
@@ -960,7 +1119,7 @@ const APInvoices = () => {
         setCreateFormData({
           invoice_number: '',
           vendor_vuid: '',
-          project_vuid: projectVuid || '', // Preserve project context if available
+          project_vuid: createFormData.project_vuid || '', // Preserve project context if available
           commitment_vuid: '',
           invoice_date: new Date().toISOString().split('T')[0],
           due_date: '',
@@ -1303,7 +1462,7 @@ const APInvoices = () => {
         const invoiceData = {
           invoice_number: invoice.invoice_number,
           vendor_vuid: vendorVuid,
-          project_vuid: projectVuid, // Use project context from URL
+          project_vuid: createFormData.project_vuid || '', // Use project context from form
           commitment_vuid: null, // No commitment linked for now
           invoice_date: invoice.invoice_date,
           due_date: invoice.due_date || null, // Handle null/empty due_date
@@ -1628,12 +1787,54 @@ const APInvoices = () => {
 
 
 
+      {/* Posting Toolbar - Only show when invoices are selected */}
+      {selectedInvoicesForPosting.size > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg p-3 mb-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center space-x-3">
+              <span className="text-sm font-medium text-blue-900">
+                {selectedInvoicesForPosting.size} invoice{selectedInvoicesForPosting.size !== 1 ? 's' : ''} selected
+              </span>
+              <button
+                onClick={() => setSelectedInvoicesForPosting(new Set())}
+                className="text-sm text-blue-600 hover:text-blue-800 underline"
+              >
+                Clear selection
+              </button>
+            </div>
+            <button
+              onClick={handlePostSelectedInvoices}
+              disabled={postingLoading}
+              className="bg-blue-600 hover:bg-blue-700 text-white text-sm font-medium py-2 px-4 rounded-md transition-colors duration-200 disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {postingLoading ? 'Posting...' : 'Post Selected'}
+            </button>
+          </div>
+        </div>
+      )}
+
       {/* Invoices Table */}
       <div className="bg-white rounded-lg shadow overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  <input
+                    type="checkbox"
+                    checked={(() => {
+                      const filteredInvoices = projectFilter 
+                        ? invoices.filter(invoice => invoice.project_vuid === projectFilter)
+                        : invoices;
+                      const selectableInvoices = filteredInvoices.filter(invoice => !postedInvoices.has(invoice.vuid));
+                      const selectableVUIDs = new Set(selectableInvoices.map(invoice => invoice.vuid));
+                      return selectableVUIDs.size > 0 && 
+                        Array.from(selectableVUIDs).every(vuid => selectedInvoicesForPosting.has(vuid));
+                    })()}
+                    onChange={handleSelectAllInvoices}
+                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                  />
+                </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Invoice #
                 </th>
@@ -1659,6 +1860,9 @@ const APInvoices = () => {
                   Status
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Posted
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
@@ -1666,6 +1870,17 @@ const APInvoices = () => {
             <tbody className="bg-white divide-y divide-gray-200">
               {paginatedInvoices.map((invoice) => (
                 <tr key={invoice.vuid} className="hover:bg-gray-50">
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <input
+                      type="checkbox"
+                      checked={selectedInvoicesForPosting.has(invoice.vuid)}
+                      onChange={(e) => handleInvoiceSelectionForPosting(invoice.vuid, e.target.checked)}
+                      disabled={postedInvoices.has(invoice.vuid)}
+                      className={`rounded border-gray-300 text-blue-600 focus:ring-blue-500 ${
+                        postedInvoices.has(invoice.vuid) ? 'opacity-50 cursor-not-allowed' : ''
+                      }`}
+                    />
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                     {invoice.invoice_number}
                   </td>
@@ -1706,6 +1921,23 @@ const APInvoices = () => {
                         </span>
                       )}
                     </div>
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                    {postedInvoices.has(invoice.vuid) ? (
+                      <span className="inline-flex items-center px-2 py-1 text-xs rounded-full bg-green-100 text-green-800 gap-1">
+                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clipRule="evenodd" />
+                        </svg>
+                        Posted
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center px-2 py-1 text-xs rounded-full bg-gray-100 text-gray-600 gap-1">
+                        <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                          <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+                        </svg>
+                        Not Posted
+                      </span>
+                    )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm font-medium">
                     <div className="flex space-x-2">
@@ -1847,6 +2079,7 @@ const APInvoices = () => {
                     required
                   >
                     <option value="">Select a vendor...</option>
+                    {console.log('AP Invoices - Rendering vendors dropdown, vendors.length:', vendors.length)}
                     {vendors.map((vendor) => (
                       <option key={vendor.vuid} value={vendor.vuid}>
                         {vendor.vendor_name}
@@ -1871,6 +2104,7 @@ const APInvoices = () => {
                     className="block w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
                   >
                     <option value="">Select a project...</option>
+                    {console.log('AP Invoices - Rendering projects dropdown, projects.length:', projects.length)}
                     {projects.map((project) => (
                       <option key={project.vuid} value={project.vuid}>
                         {project.project_name}
@@ -1949,6 +2183,7 @@ const APInvoices = () => {
                     required
                   >
                     <option value="">Select an accounting period...</option>
+                    {console.log('AP Invoices - Rendering accounting periods dropdown, accountingPeriods.length:', accountingPeriods.length)}
                     {accountingPeriods.map((period) => (
                       <option key={period.vuid} value={period.vuid}>
                         {period.month}/{period.year} - {period.period_name || 'Open Period'}

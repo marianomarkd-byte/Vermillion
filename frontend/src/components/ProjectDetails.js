@@ -102,7 +102,7 @@ const ProjectDetails = () => {
         axios.get(`${baseURL}/api/project-budgets`),
         axios.get(`${baseURL}/api/project-contracts`),
         axios.get(`${baseURL}/api/project-billings`),
-        axios.get(`${baseURL}/api/ap-invoices`),
+        axios.get(`${baseURL}/api/ap-invoices?project_vuid=${projectVuid}`),
         axios.get(`${baseURL}/api/labor-costs`),
         axios.get(`${baseURL}/api/project-expenses`)
       ]);
@@ -140,7 +140,7 @@ const ProjectDetails = () => {
       }
       
       if (apInvoicesResponse.status === 'fulfilled') {
-        setApInvoices(apInvoicesResponse.value.data.filter(invoice => invoice.project_vuid === projectVuid));
+        setApInvoices(apInvoicesResponse.value.data);
       }
       
       if (laborCostsResponse.status === 'fulfilled') {

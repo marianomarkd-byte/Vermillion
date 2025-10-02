@@ -1156,7 +1156,7 @@ def create_over_under_billing_entries_preview(wip_data, accounting_period_vuid):
             'type': 'Underbilling Adjustment',
             'journal_number': 'JE-UB-0915',
             'description': 'Underbilling Adjustment - Test Job',
-            'reference_type': 'under_billing',
+                    'reference_type': 'under_billing',
             'reference_vuid': '1e5c5e38-7519-4603-94c7-deeef4a1549d',
             'project_vuid': '1e5c5e38-7519-4603-94c7-deeef4a1549d',
             'project_number': '0915',
@@ -1164,20 +1164,20 @@ def create_over_under_billing_entries_preview(wip_data, accounting_period_vuid):
             'total_amount': 241.0,
             'total_debits': 241.0,
             'total_credits': 241.0,
-            'line_items': [
-                {
+                    'line_items': [
+                        {
                     'gl_account_vuid': cost_in_excess_account.vuid,  # Cost in Excess of Billing
                     'description': 'Underbilling - Test Job',
                     'debit_amount': 241.0,
-                    'credit_amount': 0
-                },
-                {
+                            'credit_amount': 0
+                        },
+                        {
                     'gl_account_vuid': revenue_account.vuid,  # Construction Revenue
                     'description': 'Underbilling - Test Job',
-                    'debit_amount': 0,
+                            'debit_amount': 0,
                     'credit_amount': 241.0
-                }
-            ]
+                        }
+                    ]
         }
         
         preview_entries.append(underbilling_entry)
@@ -1327,6 +1327,76 @@ def get_wip_report_data(accounting_period_vuid):
         print(f"Error getting WIP report data: {e}")
         import traceback
         traceback.print_exc()
+        return []
+
+def calculate_wip_data_from_posted_records(accounting_period_vuid):
+    """Calculate WIP data from posted records for a specific accounting period"""
+    try:
+        # Get all projects
+        projects = Project.query.all()
+        wip_projects = []
+        
+        for project in projects:
+            # Get posted records for this project and period
+            posted_records = PostedRecord.query.filter_by(
+                project_vuid=project.vuid,
+                accounting_period_vuid=accounting_period_vuid,
+                status='posted'
+            ).all()
+            
+            # Calculate costs to date from posted records
+            costs_to_date = 0
+            project_billings_total = 0
+            over_under_billing_amount = 0
+            
+            for record in posted_records:
+                if record.transaction_type in ['ap_invoice', 'ap_invoice_retainage', 'labor_cost', 'project_expense']:
+                    # These are cost transactions
+                    costs_to_date += float(record.total_amount or 0)
+                elif record.transaction_type in ['project_billing', 'project_billing_retainage']:
+                    # These are billing transactions
+                    project_billings_total += float(record.total_amount or 0)
+                elif record.transaction_type in ['over_billing', 'under_billing']:
+                    # These are over/under billing adjustments
+                    if record.transaction_type == 'over_billing':
+                        over_under_billing_amount += float(record.total_amount or 0)
+                    else:  # under_billing
+                        over_under_billing_amount -= float(record.total_amount or 0)
+            
+            # Calculate revenue recognized (this would need to be calculated from project data)
+            # For now, we'll use the same logic as the original function
+            revenue_recognized = 0
+            percent_complete = 0
+            
+            # Get project budget and contract info
+            current_budget_amount = calculate_current_budget_amount(project.vuid)
+            total_contract_amount = calculate_total_contract_amount(project.vuid)
+            
+            if current_budget_amount > 0:
+                percent_complete = (costs_to_date / current_budget_amount) * 100
+                revenue_recognized = (percent_complete / 100) * total_contract_amount
+            
+            wip_project = {
+                'project_vuid': project.vuid,
+                'project_number': project.project_number,
+                'project_name': project.project_name,
+                'customer_name': project.customer_name,
+                'total_contract_amount': total_contract_amount,
+                'current_budget_amount': current_budget_amount,
+                'costs_to_date': costs_to_date,
+                'project_billings_total': project_billings_total,
+                'revenue_recognized': revenue_recognized,
+                'percent_complete': percent_complete,
+                'over_under_billing': over_under_billing_amount,
+                'has_posted_records': len(posted_records) > 0
+            }
+            
+            wip_projects.append(wip_project)
+        
+        return wip_projects
+        
+    except Exception as e:
+        print(f"Error calculating WIP data from posted records: {e}")
         return []
 
 def calculate_wip_data_for_period(accounting_period_vuid):
@@ -1780,41 +1850,42 @@ class CostTypeSchema(ma.SQLAlchemySchema):
     expense_account = ma.auto_field()
     created_at = ma.auto_field()
 
-class VendorSchema(ma.SQLAlchemySchema):
-    class Meta:
-        model = Vendor
-    
-    vuid = ma.auto_field()
-    vendor_name = ma.auto_field()
-    vendor_number = ma.auto_field()
-    company_name = ma.auto_field()
-    contact_person = ma.auto_field()
-    email = ma.auto_field()
-    phone = ma.auto_field()
-    fax = ma.auto_field()
-    website = ma.auto_field()
-    address_line1 = ma.auto_field()
-    address_line2 = ma.auto_field()
-    city = ma.auto_field()
-    state = ma.auto_field()
-    postal_code = ma.auto_field()
-    country = ma.auto_field()
-    tax_id = ma.auto_field()
-    duns_number = ma.auto_field()
-    business_type = ma.auto_field()
-    industry = ma.auto_field()
-    credit_limit = ma.auto_field()
-    payment_terms = ma.auto_field()
-    discount_terms = ma.auto_field()
-    insurance_certificate = ma.auto_field()
-    insurance_expiry = ma.auto_field()
-    workers_comp = ma.auto_field()
-    liability_insurance = ma.auto_field()
-    status = ma.auto_field()
-    vendor_type = ma.auto_field()
-    rating = ma.auto_field()
-    notes = ma.auto_field()
-    created_at = ma.auto_field()
+# Temporarily commented out to debug schema conflicts
+# class VendorSchemaRenamed(ma.SQLAlchemySchema):
+#     class Meta:
+#         model = Vendor
+#     
+#     vuid = ma.auto_field()
+#     vendor_name = ma.auto_field()
+#     vendor_number = ma.auto_field()
+#     company_name = ma.auto_field()
+#     contact_person = ma.auto_field()
+#     email = ma.auto_field()
+#     phone = ma.auto_field()
+#     fax = ma.auto_field()
+#     website = ma.auto_field()
+#     address_line1 = ma.auto_field()
+#     address_line2 = ma.auto_field()
+#     city = ma.auto_field()
+#     state = ma.auto_field()
+#     postal_code = ma.auto_field()
+#     country = ma.auto_field()
+#     tax_id = ma.auto_field()
+#     duns_number = ma.auto_field()
+#     business_type = ma.auto_field()
+#     industry = ma.auto_field()
+#     credit_limit = ma.auto_field()
+#     payment_terms = ma.auto_field()
+#     discount_terms = ma.auto_field()
+#     insurance_certificate = ma.auto_field()
+#     insurance_expiry = ma.auto_field()
+#     workers_comp = ma.auto_field()
+#     liability_insurance = ma.auto_field()
+#     status = ma.auto_field()
+#     vendor_type = ma.auto_field()
+#     rating = ma.auto_field()
+#     notes = ma.auto_field()
+#     created_at = ma.auto_field()
 
 class CustomerSchema(ma.SQLAlchemySchema):
     class Meta:
@@ -1914,7 +1985,7 @@ class ProjectContractSchema(ma.SQLAlchemySchema):
     notes = ma.auto_field()
     created_at = ma.auto_field()
     # Include related data
-    project = ma.Nested(ProjectSchema, only=['vuid', 'project_number', 'project_name'])
+    # project = ma.Nested(ProjectSchema, only=['vuid', 'project_number', 'project_name'])
     customer = ma.Nested(CustomerSchema, only=['vuid', 'customer_name', 'customer_number'])
     # items = ma.Nested('ProjectContractItemSchema', many=True)  # Temporarily commented out to avoid schema registration conflicts
 
@@ -1953,8 +2024,8 @@ class ProjectContractItemAllocationSchema(ma.SQLAlchemySchema):
 # Schema instances
 cost_type_schema = CostTypeSchema()
 cost_types_schema = CostTypeSchema(many=True)
-vendor_schema = VendorSchema()
-vendors_schema = VendorSchema(many=True)
+# vendor_schema = VendorSchemaTemp()
+# vendors_schema = VendorSchemaTemp(many=True)
 customer_schema = CustomerSchema()
 customers_schema = CustomerSchema(many=True)
 cost_code_schema = CostCodeSchema()
@@ -2860,9 +2931,8 @@ class ProjectCommitmentSchema(ma.SQLAlchemySchema):
     created_at = ma.auto_field()
     updated_at = ma.auto_field()
     
-    # Nested relationships
-    project = ma.Nested('ProjectSchema', only=['vuid', 'project_number', 'project_name'])
-    vendor = ma.Nested('VendorSchema', only=['vuid', 'vendor_name', 'vendor_number'])
+    # Nested relationships - COMMENTED OUT TO AVOID SCHEMA CONFLICTS
+    # project = ma.Nested(ProjectSchema, only=['vuid', 'project_number', 'project_name'])
     line_items = ma.Nested('ProjectCommitmentItemSchema', many=True)
     change_orders = ma.Nested('CommitmentChangeOrderSchema', many=True)
 
@@ -2958,7 +3028,7 @@ class ProjectGLSettingsSchema(ma.SQLAlchemySchema):
     updated_at = ma.auto_field()
     
     # Nested relationships
-    project = ma.Nested('ProjectSchema', only=['vuid', 'project_number', 'project_name'])
+    # project = ma.Nested(ProjectSchema, only=['vuid', 'project_number', 'project_name'])
     ap_invoices_account = ma.Nested('ChartOfAccountsSchema', only=['vuid', 'account_number', 'account_name'])
     ap_retainage_account = ma.Nested('ChartOfAccountsSchema', only=['vuid', 'account_number', 'account_name'])
     ar_invoices_account = ma.Nested('ChartOfAccountsSchema', only=['vuid', 'account_number', 'account_name'])
@@ -3321,7 +3391,28 @@ def create_cost_code():
 def get_vendors():
     """Get all vendors"""
     vendors = Vendor.query.all()
-    return jsonify(vendors_schema.dump(vendors))
+    # Temporarily commented out to debug schema conflicts
+    # return jsonify(vendors_schema.dump(vendors))
+    return jsonify([{
+        'vuid': vendor.vuid,
+        'vendor_name': vendor.vendor_name,
+        'vendor_number': vendor.vendor_number,
+        'address_line1': vendor.address_line1,
+        'address_line2': vendor.address_line2,
+        'city': vendor.city,
+        'state': vendor.state,
+        'postal_code': vendor.postal_code,
+        'phone': vendor.phone,
+        'email': vendor.email,
+        'contact_person': vendor.contact_person,
+        'tax_id': vendor.tax_id,
+        'payment_terms': vendor.payment_terms,
+        'credit_limit': float(vendor.credit_limit) if vendor.credit_limit else 0,
+        'status': vendor.status,
+        'notes': vendor.notes,
+        'created_at': vendor.created_at.isoformat() if vendor.created_at else None,
+        'updated_at': vendor.updated_at.isoformat() if vendor.updated_at else None
+    } for vendor in vendors])
 
 @app.route('/api/vendors', methods=['POST'])
 def create_vendor():
@@ -3385,7 +3476,28 @@ def create_vendor():
         db.session.add(new_vendor)
         db.session.commit()
         
-        return jsonify(vendor_schema.dump(new_vendor)), 201
+        # Temporarily commented out to debug schema conflicts
+        # return jsonify(vendor_schema.dump(new_vendor)), 201
+        return jsonify({
+            'vuid': new_vendor.vuid,
+            'vendor_name': new_vendor.vendor_name,
+            'vendor_number': new_vendor.vendor_number,
+            'address_line1': new_vendor.address_line1,
+            'address_line2': new_vendor.address_line2,
+            'city': new_vendor.city,
+            'state': new_vendor.state,
+            'postal_code': new_vendor.postal_code,
+            'phone': new_vendor.phone,
+            'email': new_vendor.email,
+            'contact_person': new_vendor.contact_person,
+            'tax_id': new_vendor.tax_id,
+            'payment_terms': new_vendor.payment_terms,
+            'credit_limit': float(new_vendor.credit_limit) if new_vendor.credit_limit else 0,
+            'status': new_vendor.status,
+            'notes': new_vendor.notes,
+            'created_at': new_vendor.created_at.isoformat() if new_vendor.created_at else None,
+            'updated_at': new_vendor.updated_at.isoformat() if new_vendor.updated_at else None
+        }), 201
         
     except Exception as e:
         db.session.rollback()
@@ -5300,7 +5412,62 @@ def get_ap_invoices():
             query = query.filter_by(accounting_period_vuid=accounting_period_vuid)
         
         invoices = query.all()
-        return jsonify(ap_invoices_schema.dump(invoices))
+        
+        # Manually construct response with related data
+        result = []
+        for invoice in invoices:
+            # Get vendor data
+            vendor = db.session.get(Vendor, invoice.vendor_vuid) if invoice.vendor_vuid else None
+            
+            # Get project data
+            project = db.session.get(Project, invoice.project_vuid) if invoice.project_vuid else None
+            
+            # Get accounting period data
+            accounting_period = db.session.get(AccountingPeriod, invoice.accounting_period_vuid) if invoice.accounting_period_vuid else None
+            
+            # Debug output
+            print(f"DEBUG: Invoice {invoice.vuid}")
+            print(f"DEBUG: Vendor VUID: {invoice.vendor_vuid}, Vendor object: {vendor}")
+            print(f"DEBUG: Project VUID: {invoice.project_vuid}, Project object: {project}")
+            print(f"DEBUG: Accounting Period VUID: {invoice.accounting_period_vuid}, Accounting Period object: {accounting_period}")
+            
+            invoice_data = {
+                'vuid': invoice.vuid,
+                'invoice_number': invoice.invoice_number,
+                'vendor_vuid': invoice.vendor_vuid,
+                'project_vuid': invoice.project_vuid,
+                'commitment_vuid': invoice.commitment_vuid,
+                'invoice_date': invoice.invoice_date.isoformat() if invoice.invoice_date else None,
+                'due_date': invoice.due_date.isoformat() if invoice.due_date else None,
+                'subtotal': float(invoice.subtotal) if invoice.subtotal else 0,
+                'retention_held': float(invoice.retention_held) if invoice.retention_held else 0,
+                'retention_released': float(invoice.retention_released) if invoice.retention_released else 0,
+                'total_amount': float(invoice.total_amount) if invoice.total_amount else 0,
+                'status': invoice.status,
+                'description': invoice.description,
+                'accounting_period_vuid': invoice.accounting_period_vuid,
+                'exported_to_accounting': invoice.exported_to_accounting,
+                'accounting_export_date': invoice.accounting_export_date.isoformat() if invoice.accounting_export_date else None,
+                'created_at': invoice.created_at.isoformat() if invoice.created_at else None,
+                'updated_at': invoice.updated_at.isoformat() if invoice.updated_at else None,
+                'vendor': {
+                    'vuid': vendor.vuid,
+                    'vendor_name': vendor.vendor_name
+                } if vendor else None,
+                'project': {
+                    'vuid': project.vuid,
+                    'project_name': project.project_name
+                } if project else None,
+                'accounting_period': {
+                    'vuid': accounting_period.vuid,
+                    'month': accounting_period.month,
+                    'year': accounting_period.year,
+                    'status': accounting_period.status
+                } if accounting_period else None
+            }
+            result.append(invoice_data)
+        
+        return jsonify(result)
         
     except Exception as e:
         return jsonify({'error': f'Error fetching AP invoices: {str(e)}'}), 500
@@ -5343,7 +5510,24 @@ def create_ap_invoice():
         db.session.add(new_invoice)
         db.session.commit()
         
-        return jsonify(ap_invoice_schema.dump(new_invoice)), 201
+        return jsonify({
+            'vuid': new_invoice.vuid,
+            'invoice_number': new_invoice.invoice_number,
+            'vendor_vuid': new_invoice.vendor_vuid,
+            'project_vuid': new_invoice.project_vuid,
+            'commitment_vuid': new_invoice.commitment_vuid,
+            'invoice_date': new_invoice.invoice_date.isoformat() if new_invoice.invoice_date else None,
+            'due_date': new_invoice.due_date.isoformat() if new_invoice.due_date else None,
+            'subtotal': float(new_invoice.subtotal) if new_invoice.subtotal else 0,
+            'retention_held': float(new_invoice.retention_held) if new_invoice.retention_held else 0,
+            'retention_released': float(new_invoice.retention_released) if new_invoice.retention_released else 0,
+            'total_amount': float(new_invoice.total_amount) if new_invoice.total_amount else 0,
+            'status': new_invoice.status,
+            'description': new_invoice.description,
+            'accounting_period_vuid': new_invoice.accounting_period_vuid,
+            'created_at': new_invoice.created_at.isoformat() if new_invoice.created_at else None,
+            'updated_at': new_invoice.updated_at.isoformat() if new_invoice.updated_at else None
+        }), 201
         
     except Exception as e:
         db.session.rollback()
@@ -5356,7 +5540,24 @@ def get_ap_invoice(vuid):
     if not invoice:
         return jsonify({'error': 'AP invoice not found'}), 404
     
-    return jsonify(ap_invoice_schema.dump(invoice))
+    return jsonify({
+        'vuid': invoice.vuid,
+        'invoice_number': invoice.invoice_number,
+        'vendor_vuid': invoice.vendor_vuid,
+        'project_vuid': invoice.project_vuid,
+        'commitment_vuid': invoice.commitment_vuid,
+        'invoice_date': invoice.invoice_date.isoformat() if invoice.invoice_date else None,
+        'due_date': invoice.due_date.isoformat() if invoice.due_date else None,
+        'subtotal': float(invoice.subtotal) if invoice.subtotal else 0,
+        'retention_held': float(invoice.retention_held) if invoice.retention_held else 0,
+        'retention_released': float(invoice.retention_released) if invoice.retention_released else 0,
+        'total_amount': float(invoice.total_amount) if invoice.total_amount else 0,
+        'status': invoice.status,
+        'description': invoice.description,
+        'accounting_period_vuid': invoice.accounting_period_vuid,
+        'created_at': invoice.created_at.isoformat() if invoice.created_at else None,
+        'updated_at': invoice.updated_at.isoformat() if invoice.updated_at else None
+    })
 
 @app.route('/api/ap-invoices/<vuid>', methods=['PUT'])
 def update_ap_invoice(vuid):
@@ -5412,7 +5613,24 @@ def update_ap_invoice(vuid):
             invoice.description = data['description']
         
         db.session.commit()
-        return jsonify(ap_invoice_schema.dump(invoice))
+        return jsonify({
+            'vuid': invoice.vuid,
+            'invoice_number': invoice.invoice_number,
+            'vendor_vuid': invoice.vendor_vuid,
+            'project_vuid': invoice.project_vuid,
+            'commitment_vuid': invoice.commitment_vuid,
+            'invoice_date': invoice.invoice_date.isoformat() if invoice.invoice_date else None,
+            'due_date': invoice.due_date.isoformat() if invoice.due_date else None,
+            'subtotal': float(invoice.subtotal) if invoice.subtotal else 0,
+            'retention_held': float(invoice.retention_held) if invoice.retention_held else 0,
+            'retention_released': float(invoice.retention_released) if invoice.retention_released else 0,
+            'total_amount': float(invoice.total_amount) if invoice.total_amount else 0,
+            'status': invoice.status,
+            'description': invoice.description,
+            'accounting_period_vuid': invoice.accounting_period_vuid,
+            'created_at': invoice.created_at.isoformat() if invoice.created_at else None,
+            'updated_at': invoice.updated_at.isoformat() if invoice.updated_at else None
+        })
         
     except Exception as e:
         db.session.rollback()
@@ -7019,7 +7237,7 @@ def get_wip_eac_data(project_vuid, accounting_period_vuid):
         print(f"DEBUG: Total EAC including pending COs: {total_eac}")
         
         return total_eac, False, "From saved buyout/forecasting data + pending change orders"
-        
+            
     except Exception as e:
         print(f"Error getting EAC data: {str(e)}")
         return 0.0, False, f"Error: {str(e)}"
@@ -8632,6 +8850,102 @@ def get_external_system_ids_by_object():
         
     except Exception as e:
         return jsonify({'error': f'Error retrieving external system ID mappings: {str(e)}'}), 500
+
+@app.route('/api/wip-posted', methods=['GET'])
+def get_wip_report_from_posted_records():
+    """Get WIP (Work in Progress) report data from posted records"""
+    try:
+        # Get accounting period filter from query parameters
+        accounting_period_vuid = request.args.get('accounting_period_vuid')
+        selected_period = None
+        
+        if accounting_period_vuid:
+            selected_period = db.session.get(AccountingPeriod, accounting_period_vuid)
+            if not selected_period:
+                return jsonify({'error': 'Invalid accounting period specified'}), 400
+        
+        # Check if EAC-based reporting is enabled
+        use_eac_reporting = get_wip_setting('use_eac_reporting')
+        eac_enabled = use_eac_reporting and use_eac_reporting.lower() == 'true'
+        
+        # Get all ACTIVE projects
+        projects = Project.query.filter_by(status='active').all()
+        wip_data = []
+        
+        for project in projects:
+            # Get posted records for this project and period
+            posted_records = PostedRecord.query.filter_by(
+                project_vuid=project.vuid,
+                accounting_period_vuid=accounting_period_vuid,
+                status='posted'
+            ).all()
+            
+            # Calculate costs to date from posted records
+            costs_to_date = 0
+            project_billings_total = 0
+            over_under_billing_amount = 0
+            
+            for record in posted_records:
+                if record.transaction_type in ['ap_invoice', 'ap_invoice_retainage', 'labor_cost', 'project_expense']:
+                    # These are cost transactions
+                    costs_to_date += float(record.total_amount or 0)
+                elif record.transaction_type in ['project_billing', 'project_billing_retainage']:
+                    # These are billing transactions
+                    project_billings_total += float(record.total_amount or 0)
+                elif record.transaction_type in ['over_billing', 'under_billing']:
+                    # These are over/under billing adjustments
+                    if record.transaction_type == 'over_billing':
+                        over_under_billing_amount += float(record.total_amount or 0)
+                    else:  # under_billing
+                        over_under_billing_amount -= float(record.total_amount or 0)
+            
+            # Calculate revenue recognized using the same logic as the original function
+            revenue_data = calculate_revenue_recognized(project.vuid, accounting_period_vuid, eac_enabled)
+            revenue_recognized = revenue_data['revenue_recognized']
+            percent_complete = revenue_data['percent_complete']
+            total_contract_amount = revenue_data['total_contract_amount']
+            eac_amount = revenue_data['eac_amount']
+            current_budget_amount = revenue_data['current_budget_amount']
+            
+            # Calculate over/under billing based on posted records
+            over_under_billing = over_under_billing_amount
+            
+            wip_project = {
+                'project_vuid': project.vuid,
+                'project_number': project.project_number,
+                'project_name': project.project_name,
+                'customer_name': project.client_name,
+                'total_contract_amount': total_contract_amount,
+                'current_budget_amount': current_budget_amount,
+                'costs_to_date': costs_to_date,
+                'project_billings_total': project_billings_total,
+                'revenue_recognized': revenue_recognized,
+                'percent_complete': percent_complete,
+                'over_under_billing': over_under_billing,
+                'eac_amount': eac_amount,
+                'has_posted_records': len(posted_records) > 0,
+                'posted_records_count': len(posted_records)
+            }
+            
+            wip_data.append(wip_project)
+        
+        return jsonify({
+            'success': True,
+            'wip_data': wip_data,
+            'accounting_period': {
+                'vuid': selected_period.vuid if selected_period else None,
+                'month': selected_period.month if selected_period else None,
+                'year': selected_period.year if selected_period else None
+            },
+            'eac_enabled': eac_enabled,
+            'total_projects': len(wip_data)
+        })
+        
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': f'Error generating WIP report from posted records: {str(e)}'
+        }), 500
 
 @app.route('/api/wip', methods=['GET'])
 def get_wip_report():
@@ -13276,12 +13590,11 @@ class APInvoiceSchema(ma.SQLAlchemySchema):
     created_at = ma.auto_field()
     updated_at = ma.auto_field()
     
-    # Nested relationships
-    vendor = ma.Nested('VendorSchema', only=['vuid', 'vendor_name'])
-    project = ma.Nested('ProjectSchema', only=['vuid', 'project_number', 'project_name'])
-    commitment = ma.Nested('ProjectCommitmentSchema', only=['vuid', 'commitment_number', 'commitment_name'])
-    accounting_period = ma.Nested('AccountingPeriodSchema', only=['vuid', 'month', 'year'])
-    line_items = ma.Nested('APInvoiceLineItemSchema', many=True, exclude=('invoice',))
+    # Nested relationships - COMMENTED OUT TO AVOID SCHEMA CONFLICTS
+    # project = ma.Nested(ProjectSchema, only=['vuid', 'project_number', 'project_name'])
+    # commitment = ma.Nested(ProjectCommitmentSchema, only=['vuid', 'commitment_number', 'commitment_name'])
+    # accounting_period = ma.Nested(AccountingPeriodSchema, only=['vuid', 'month', 'year'])
+    # line_items = ma.Nested(APInvoiceLineItemSchema, many=True, exclude=('invoice',))  # Forward reference issue
 
 class APInvoiceLineItemSchema(ma.SQLAlchemySchema):
     class Meta:
@@ -13301,11 +13614,11 @@ class APInvoiceLineItemSchema(ma.SQLAlchemySchema):
     created_at = ma.auto_field()
     updated_at = ma.auto_field()
     
-    # Nested relationships
-    invoice = ma.Nested('APInvoiceSchema', exclude=('line_items',))
-    cost_code = ma.Nested('CostCodeSchema', only=['vuid', 'code', 'description'])
-    cost_type = ma.Nested('CostTypeSchema', only=['vuid', 'cost_type', 'description'])
-    commitment_line = ma.Nested('ProjectCommitmentItemSchema', only=['vuid', 'description'])
+    # Nested relationships commented out to avoid schema conflicts
+    # invoice = ma.Nested(APInvoiceSchema, exclude=('line_items',))
+    # cost_code = ma.Nested(CostCodeSchema, only=['vuid', 'code', 'description'])
+    # cost_type = ma.Nested(CostTypeSchema, only=['vuid', 'cost_type', 'description'])
+    # commitment_line = ma.Nested(ProjectCommitmentItemSchema, only=['vuid', 'description'])
 
 # Labor Cost Schemas
 class EmployeeSchema(ma.SQLAlchemySchema):
@@ -13344,7 +13657,7 @@ class LaborCostSchema(ma.SQLAlchemySchema):
     
     # Nested relationships
     employee = ma.Nested('EmployeeSchema', only=['vuid', 'employee_id', 'employee_name', 'trade', 'charge_rate', 'bill_rate'])
-    project = ma.Nested('ProjectSchema', only=['vuid', 'project_name', 'project_number'])
+    # project = ma.Nested(ProjectSchema, only=['vuid', 'project_name', 'project_number'])
     cost_code = ma.Nested('CostCodeSchema', only=['vuid', 'code', 'description'])
     cost_type = ma.Nested('CostTypeSchema', only=['vuid', 'cost_type', 'description'])
     accounting_period = ma.Nested('AccountingPeriodSchema', only=['vuid', 'month', 'year', 'status'])
@@ -13374,7 +13687,7 @@ class ProjectBillingSchema(ma.SQLAlchemySchema):
     updated_at = ma.auto_field()
     
     # Nested relationships
-    project = ma.Nested('ProjectSchema', only=['vuid', 'project_number', 'project_name'])
+    # project = ma.Nested(ProjectSchema, only=['vuid', 'project_number', 'project_name'])
     contract = ma.Nested('ProjectContractSchema', only=['vuid', 'contract_number', 'contract_name'])
     customer = ma.Nested('CustomerSchema', only=['vuid', 'customer_name'])
     accounting_period = ma.Nested('AccountingPeriodSchema', only=['vuid', 'month', 'year'])
@@ -13429,13 +13742,12 @@ class ProjectExpenseSchema(ma.SQLAlchemySchema):
     created_at = ma.auto_field()
     updated_at = ma.auto_field()
     
-    # Nested relationships
-    project = ma.Nested('ProjectSchema', only=['vuid', 'project_number', 'project_name'])
-    cost_code = ma.Nested('CostCodeSchema', only=['vuid', 'code', 'description'])
-    cost_type = ma.Nested('CostTypeSchema', only=['vuid', 'cost_type', 'description'])
-    vendor = ma.Nested('VendorSchema', only=['vuid', 'vendor_name'])
-    employee = ma.Nested('EmployeeSchema', only=['vuid', 'employee_id', 'employee_name', 'trade'])
-    accounting_period = ma.Nested('AccountingPeriodSchema', only=['vuid', 'month', 'year', 'status'])
+    # Nested relationships - COMMENTED OUT TO AVOID SCHEMA CONFLICTS
+    # project = ma.Nested(ProjectSchema, only=['vuid', 'project_number', 'project_name'])
+    # cost_code = ma.Nested('CostCodeSchema', only=['vuid', 'code', 'description'])
+    # cost_type = ma.Nested('CostTypeSchema', only=['vuid', 'cost_type', 'description'])
+    # employee = ma.Nested('EmployeeSchema', only=['vuid', 'employee_id', 'employee_name', 'trade'])
+    # accounting_period = ma.Nested('AccountingPeriodSchema', only=['vuid', 'month', 'year', 'status'])
 
 # Schema instances for AP Invoices
 ap_invoice_schema = APInvoiceSchema()
@@ -13464,7 +13776,7 @@ class JournalEntrySchema(ma.SQLAlchemySchema):
     
     # Nested relationships
     accounting_period = ma.Nested('AccountingPeriodSchema', only=['vuid', 'month', 'year'])
-    project = ma.Nested('ProjectSchema', only=['vuid', 'project_number', 'project_name'])
+    # project = ma.Nested(ProjectSchema, only=['vuid', 'project_number', 'project_name'])
     line_items = ma.Nested('JournalEntryLineSchema', many=True, exclude=('journal_entry',))
 
 class JournalEntryLineSchema(ma.SQLAlchemySchema):
@@ -14279,8 +14591,8 @@ def preview_journal_entries():
                 
                 credit_line = {
                     'description': f"Project Billing {billing.billing_number} (Net)",
-                    'account': revenue_account_name,
-                    'debit_amount': 0,
+                        'account': revenue_account_name,
+                        'debit_amount': 0,
                     'credit_amount': net_amount,
                     'cost_code': 'N/A',
                     'cost_type': 'N/A'
@@ -14626,6 +14938,121 @@ def generate_journal_entries():
         
     except Exception as e:
         return jsonify({'error': f'Error generating journal entries: {str(e)}'}), 500
+
+@app.route('/api/journal-entries/generate-from-posted', methods=['POST'])
+def generate_journal_entries_from_posted():
+    """Generate journal entries from posted records for an accounting period"""
+    try:
+        data = request.get_json()
+        accounting_period_vuid = data.get('accounting_period_vuid')
+        
+        if not accounting_period_vuid:
+            return jsonify({'error': 'accounting_period_vuid is required'}), 400
+        
+        # Get the accounting period
+        period = db.session.get(AccountingPeriod, accounting_period_vuid)
+        if not period:
+            return jsonify({'error': 'Accounting period not found'}), 404
+        
+        print(f"Generating journal entries from posted records for accounting period {period.month}/{period.year}")
+        
+        # Generate journal entries from posted records
+        success = generate_journal_entries_from_posted_records(period.vuid)
+        
+        if not success:
+            return jsonify({'error': 'Failed to generate journal entries from posted records'}), 500
+        
+        return jsonify({
+            'success': True,
+            'message': 'Successfully generated journal entries from posted records',
+            'accounting_period': {
+                'vuid': period.vuid,
+                'month': period.month,
+                'year': period.year
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Error generating journal entries from posted records: {str(e)}'}), 500
+
+@app.route('/api/journal-entries/preview-from-posted/<accounting_period_vuid>', methods=['GET'])
+def preview_journal_entries_from_posted_records(accounting_period_vuid):
+    """Preview journal entries from posted records for a specific accounting period"""
+    try:
+        # Get the accounting period
+        period = AccountingPeriod.query.get(accounting_period_vuid)
+        if not period:
+            return jsonify({'error': 'Accounting period not found'}), 404
+        
+        # Get all posted records for this period
+        posted_records = PostedRecord.query.filter_by(
+            accounting_period_vuid=accounting_period_vuid,
+            status='posted'
+        ).options(
+            db.joinedload(PostedRecord.line_items),
+            db.joinedload(PostedRecord.project)
+        ).all()
+        
+        # Convert posted records to journal entry preview format
+        preview_entries = []
+        
+        for posted_record in posted_records:
+            # Create journal entry preview from posted record
+            journal_entry_preview = {
+                'journal_number': f"JE-{posted_record.reference_number}",
+                'description': posted_record.description or f"{posted_record.transaction_type.replace('_', ' ').title()} - {posted_record.reference_number}",
+                'reference_type': posted_record.transaction_type,
+                'reference_vuid': posted_record.transaction_vuid,
+                'reference_number': posted_record.reference_number,
+                'project_vuid': posted_record.project_vuid,
+                'project_name': posted_record.project.project_name if posted_record.project else 'Unknown Project',
+                'project_number': posted_record.project.project_number if posted_record.project else 'Unknown',
+                'type': posted_record.transaction_type.replace('_', ' ').title(),
+                'total_debits': float(posted_record.total_debits),
+                'total_credits': float(posted_record.total_credits),
+                'total_amount': float(posted_record.total_amount),
+                'line_items': []
+            }
+            
+            # Add line items from posted record
+            for line_item in posted_record.line_items:
+                line_item_preview = {
+                    'gl_account_vuid': line_item.gl_account_vuid,
+                    'account_name': line_item.account_name,
+                    'debit_amount': float(line_item.debit_amount),
+                    'credit_amount': float(line_item.credit_amount),
+                    'description': line_item.description or '',
+                    'line_number': line_item.line_number
+                }
+                journal_entry_preview['line_items'].append(line_item_preview)
+            
+            preview_entries.append(journal_entry_preview)
+        
+        # Calculate totals for preview summary
+        total_debits = sum(float(entry['total_debits']) for entry in preview_entries)
+        total_credits = sum(float(entry['total_credits']) for entry in preview_entries)
+        balance_difference = total_debits - total_credits
+        
+        return jsonify({
+            'success': True,
+            'journal_entries': preview_entries,
+            'preview_summary': {
+                'total_entries': len(preview_entries),
+                'total_debits': total_debits,
+                'total_credits': total_credits,
+                'balance_difference': balance_difference,
+                'is_balanced': abs(balance_difference) < 0.01
+            },
+            'accounting_period': {
+                'vuid': period.vuid,
+                'month': period.month,
+                'year': period.year,
+                'status': period.status
+            }
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Error previewing journal entries from posted records: {str(e)}'}), 500
 
 @app.route('/api/journal-entries/<vuid>/reverse', methods=['POST'])
 def reverse_journal_entry(vuid):
@@ -16541,6 +16968,1080 @@ def validate_all_projects_financial_alignment():
         
     except Exception as e:
         return jsonify({'error': f'Error validating all projects financial alignment: {str(e)}'}), 500
+
+# Posted Records API Endpoints
+@app.route('/api/posted-records/post', methods=['POST'])
+def post_transaction():
+    """Post a transaction to the posted records system"""
+    try:
+        data = request.get_json()
+        transaction_type = data.get('transaction_type')
+        transaction_vuid = data.get('transaction_vuid')
+        posted_by = data.get('posted_by', 'System')
+        
+        if not transaction_type:
+            return jsonify({'error': 'transaction_type is required'}), 400
+        
+        # transaction_vuid is required for all transaction types except over_under_billing
+        if transaction_type != 'over_under_billing' and not transaction_vuid:
+            return jsonify({'error': 'transaction_vuid is required'}), 400
+        
+        # Route to appropriate posting function
+        if transaction_type == 'ap_invoice':
+            result = post_ap_invoice(transaction_vuid, posted_by)
+        elif transaction_type == 'project_billing':
+            result = post_project_billing(transaction_vuid, posted_by)
+        elif transaction_type == 'labor_cost':
+            result = post_labor_cost(transaction_vuid, posted_by)
+        elif transaction_type == 'project_expense':
+            result = post_project_expense(transaction_vuid, posted_by)
+        elif transaction_type == 'over_under_billing':
+            # For over/under billing, we need additional parameters
+            project_vuid = data.get('project_vuid')
+            accounting_period_vuid = data.get('accounting_period_vuid')
+            over_under_amount = data.get('over_under_amount')
+            
+            if not project_vuid or not accounting_period_vuid or over_under_amount is None:
+                return jsonify({'error': 'project_vuid, accounting_period_vuid, and over_under_amount are required for over/under billing'}), 400
+            
+            result = post_over_under_billing(project_vuid, accounting_period_vuid, over_under_amount, posted_by)
+        else:
+            return jsonify({'error': f'Unsupported transaction type: {transaction_type}'}), 400
+        
+        if result['success']:
+            return jsonify(result), 200
+        else:
+            return jsonify(result), 400
+            
+    except Exception as e:
+        return jsonify({'error': f'Error posting transaction: {str(e)}'}), 500
+
+@app.route('/api/posted-records/comprehensive-backfill/<accounting_period_vuid>', methods=['POST'])
+def comprehensive_backfill_posted_records(accounting_period_vuid):
+    """Comprehensive backfill of ALL transactions for ALL projects in a period"""
+    try:
+        data = request.get_json() or {}
+        posted_by = data.get('posted_by', 'Comprehensive Backfill')
+        
+        result = comprehensive_backfill_all_transactions(accounting_period_vuid, posted_by)
+        
+        if result['success']:
+            return jsonify(result), 200
+        else:
+            return jsonify(result), 400
+            
+    except Exception as e:
+        return jsonify({'error': f'Error in comprehensive backfill: {str(e)}'}), 500
+
+@app.route('/api/posted-records/backfill/<accounting_period_vuid>', methods=['POST'])
+def backfill_posted_records(accounting_period_vuid):
+    """Backfill existing journal entries into posted records system"""
+    try:
+        data = request.get_json() or {}
+        posted_by = data.get('posted_by', 'System Backfill')
+        
+        result = backfill_existing_journal_entries_to_posted_records(accounting_period_vuid, posted_by)
+        
+        if result['success']:
+            return jsonify(result), 200
+        else:
+            return jsonify(result), 400
+            
+    except Exception as e:
+        return jsonify({'error': f'Error backfilling posted records: {str(e)}'}), 500
+
+@app.route('/api/posted-records/<accounting_period_vuid>', methods=['GET'])
+def get_posted_records_for_period(accounting_period_vuid):
+    """Get all posted records for a specific accounting period"""
+    try:
+        posted_records = PostedRecord.query.options(
+            db.joinedload(PostedRecord.project),
+            db.joinedload(PostedRecord.line_items)
+        ).filter_by(
+            accounting_period_vuid=accounting_period_vuid,
+            status='posted'
+        ).order_by(PostedRecord.posted_at).all()
+        
+        records_data = []
+        for record in posted_records:
+            record_data = {
+                'vuid': record.vuid,
+                'transaction_type': record.transaction_type,
+                'transaction_vuid': record.transaction_vuid,
+                'posted_by': record.posted_by,
+                'posted_at': record.posted_at.isoformat(),
+                'project_vuid': record.project_vuid,
+                'project_name': record.project.project_name if record.project else None,
+                'project_number': record.project.project_number if record.project else None,
+                'reference_number': record.reference_number,
+                'description': record.description,
+                'total_amount': float(record.total_amount or 0),
+                'net_amount': float(record.net_amount or 0),
+                'retainage_amount': float(record.retainage_amount or 0),
+                'total_debits': float(record.total_debits or 0),
+                'total_credits': float(record.total_credits or 0),
+                'line_items': [{
+                    'vuid': line.vuid,
+                    'gl_account_vuid': line.gl_account_vuid,
+                    'account_name': line.account_name,
+                    'debit_amount': float(line.debit_amount or 0),
+                    'credit_amount': float(line.credit_amount or 0),
+                    'description': line.description,
+                    'line_number': line.line_number
+                } for line in record.line_items]
+            }
+            records_data.append(record_data)
+        
+        return jsonify({
+            'success': True,
+            'posted_records': records_data,
+            'total_records': len(records_data)
+        })
+        
+    except Exception as e:
+        return jsonify({'error': f'Error retrieving posted records: {str(e)}'}), 500
+
+@app.route('/api/posted-records/<record_vuid>/reverse', methods=['POST'])
+def reverse_posted_record(record_vuid):
+    """Reverse a posted record"""
+    try:
+        data = request.get_json()
+        reversed_by = data.get('reversed_by', 'System')
+        
+        posted_record = PostedRecord.query.get(record_vuid)
+        if not posted_record:
+            return jsonify({'error': 'Posted record not found'}), 404
+        
+        if posted_record.status != 'posted':
+            return jsonify({'error': 'Only posted records can be reversed'}), 400
+        
+        # Update status to reversed
+        posted_record.status = 'reversed'
+        posted_record.reversed_at = datetime.utcnow()
+        posted_record.reversed_by = reversed_by
+        
+        db.session.commit()
+        
+        return jsonify({
+            'success': True,
+            'message': f'Posted record {posted_record.reference_number} reversed successfully'
+        })
+        
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Error reversing posted record: {str(e)}'}), 500
+
+# Posted Records System Functions
+def post_ap_invoice(invoice_vuid, posted_by):
+    """Post an AP Invoice to the posted records system"""
+    try:
+        # Get the invoice with relationships
+        invoice = APInvoice.query.options(
+            db.joinedload(APInvoice.project),
+            db.joinedload(APInvoice.line_items).joinedload(APInvoiceLineItem.cost_type)
+        ).get(invoice_vuid)
+        
+        if not invoice:
+            return {'success': False, 'error': 'Invoice not found'}
+        
+        if invoice.status != 'approved':
+            return {'success': False, 'error': 'Invoice must be approved before posting'}
+        
+        # Check if already posted
+        existing_posted = PostedRecord.query.filter_by(
+            transaction_type='ap_invoice',
+            transaction_vuid=invoice_vuid,
+            status='posted'
+        ).first()
+        
+        if existing_posted:
+            return {'success': False, 'error': 'Invoice already posted'}
+        
+        # Create posted record
+        posted_record = PostedRecord(
+            transaction_type='ap_invoice',
+            transaction_vuid=invoice_vuid,
+            posted_by=posted_by,
+            accounting_period_vuid=invoice.accounting_period_vuid,
+            project_vuid=invoice.project_vuid,
+            reference_number=invoice.invoice_number,
+            reference_type='ap_invoice',
+            description=f"AP Invoice {invoice.invoice_number}",
+            total_amount=float(invoice.total_amount or 0),
+            net_amount=float(invoice.total_amount or 0) - float(invoice.retention_held or 0),
+            retainage_amount=float(invoice.retention_held or 0),
+            total_debits=float(invoice.total_amount or 0),
+            total_credits=float(invoice.total_amount or 0)
+        )
+        
+        db.session.add(posted_record)
+        db.session.flush()  # Get the vuid
+        
+        # Get the correct account VUIDs
+        construction_costs_account = ChartOfAccounts.query.filter(
+            ChartOfAccounts.account_name.ilike('%construction%cost%')
+        ).first()
+        
+        accounts_payable_account = ChartOfAccounts.query.filter(
+            ChartOfAccounts.account_name.ilike('%accounts%payable%')
+        ).first()
+        
+        retainage_payable_account = ChartOfAccounts.query.filter(
+            ChartOfAccounts.account_name.ilike('%retainage%payable%')
+        ).first()
+        
+        if not construction_costs_account or not accounts_payable_account:
+            return {'success': False, 'error': 'Required GL accounts not found in chart of accounts'}
+        
+        # Create line items
+        line_number = 1
+        
+        # Debit: Construction Costs
+        posted_record.line_items.append(PostedRecordLineItem(
+            gl_account_vuid=construction_costs_account.vuid,
+            account_name=f"{construction_costs_account.account_number} - {construction_costs_account.account_name}",
+            debit_amount=float(invoice.total_amount or 0),
+            credit_amount=0,
+            description=f"AP Invoice {invoice.invoice_number}",
+            line_number=line_number
+        ))
+        line_number += 1
+        
+        # Credit: Accounts Payable
+        posted_record.line_items.append(PostedRecordLineItem(
+            gl_account_vuid=accounts_payable_account.vuid,
+            account_name=f"{accounts_payable_account.account_number} - {accounts_payable_account.account_name}",
+            debit_amount=0,
+            credit_amount=float(invoice.total_amount or 0),
+            description=f"AP Invoice {invoice.invoice_number}",
+            line_number=line_number
+        ))
+        
+        # If there's retainage, create separate posted record
+        if float(invoice.retention_held or 0) > 0:
+            if not retainage_payable_account:
+                return {'success': False, 'error': 'Retainage Payable account not found in chart of accounts'}
+                
+            retainage_posted_record = PostedRecord(
+                transaction_type='ap_invoice_retainage',
+                transaction_vuid=invoice_vuid,
+                posted_by=posted_by,
+                accounting_period_vuid=invoice.accounting_period_vuid,
+                project_vuid=invoice.project_vuid,
+                reference_number=f"{invoice.invoice_number}-RET",
+                reference_type='ap_invoice_retainage',
+                description=f"AP Invoice {invoice.invoice_number} (Retainage)",
+                total_amount=float(invoice.retention_held or 0),
+                net_amount=0,
+                retainage_amount=float(invoice.retention_held or 0),
+                total_debits=float(invoice.retention_held or 0),
+                total_credits=float(invoice.retention_held or 0)
+            )
+            
+            db.session.add(retainage_posted_record)
+            db.session.flush()
+            
+            # Retainage line items
+            retainage_posted_record.line_items.append(PostedRecordLineItem(
+                gl_account_vuid=construction_costs_account.vuid,
+                account_name=f"{construction_costs_account.account_number} - {construction_costs_account.account_name}",
+                debit_amount=float(invoice.retention_held or 0),
+                credit_amount=0,
+                description=f"AP Invoice {invoice.invoice_number} Retainage",
+                line_number=1
+            ))
+            
+            retainage_posted_record.line_items.append(PostedRecordLineItem(
+                gl_account_vuid=retainage_payable_account.vuid,
+                account_name=f"{retainage_payable_account.account_number} - {retainage_payable_account.account_name}",
+                debit_amount=0,
+                credit_amount=float(invoice.retention_held or 0),
+                description=f"AP Invoice {invoice.invoice_number} Retainage",
+                line_number=2
+            ))
+        
+        db.session.commit()
+        return {'success': True, 'message': f'AP Invoice {invoice.invoice_number} posted successfully'}
+        
+    except Exception as e:
+        db.session.rollback()
+        return {'success': False, 'error': f'Error posting AP Invoice: {str(e)}'}
+
+def post_project_billing(billing_vuid, posted_by):
+    """Post a Project Billing to the posted records system"""
+    try:
+        # Get the billing with relationships
+        billing = ProjectBilling.query.options(
+            db.joinedload(ProjectBilling.project)
+        ).get(billing_vuid)
+        
+        if not billing:
+            return {'success': False, 'error': 'Project billing not found'}
+        
+        if billing.status != 'approved':
+            return {'success': False, 'error': 'Project billing must be approved before posting'}
+        
+        # Check if already posted
+        existing_posted = PostedRecord.query.filter_by(
+            transaction_type='project_billing',
+            transaction_vuid=billing_vuid,
+            status='posted'
+        ).first()
+        
+        if existing_posted:
+            return {'success': False, 'error': 'Project billing already posted'}
+        
+        # Calculate net amount
+        net_amount = float(billing.total_amount or 0) - float(billing.retention_held or 0) + float(billing.retention_released or 0)
+        
+        # Create posted record
+        posted_record = PostedRecord(
+            transaction_type='project_billing',
+            transaction_vuid=billing_vuid,
+            posted_by=posted_by,
+            accounting_period_vuid=billing.accounting_period_vuid,
+            project_vuid=billing.project_vuid,
+            reference_number=billing.billing_number,
+            reference_type='project_billing',
+            description=f"Project Billing {billing.billing_number}",
+            total_amount=float(billing.total_amount or 0),
+            net_amount=net_amount,
+            retainage_amount=float(billing.retention_held or 0),
+            total_debits=net_amount,
+            total_credits=net_amount
+        )
+        
+        db.session.add(posted_record)
+        db.session.flush()
+        
+        # Get the correct account VUIDs
+        accounts_receivable_account = ChartOfAccounts.query.filter(
+            ChartOfAccounts.account_name.ilike('%accounts%receivable%')
+        ).first()
+        
+        construction_revenue_account = ChartOfAccounts.query.filter(
+            ChartOfAccounts.account_name.ilike('%construction%revenue%')
+        ).first()
+        
+        retainage_payable_account = ChartOfAccounts.query.filter(
+            ChartOfAccounts.account_name.ilike('%retainage%payable%')
+        ).first()
+        
+        if not accounts_receivable_account or not construction_revenue_account:
+            return {'success': False, 'error': 'Required GL accounts not found in chart of accounts'}
+        
+        # Create line items
+        # Debit: Accounts Receivable
+        posted_record.line_items.append(PostedRecordLineItem(
+            gl_account_vuid=accounts_receivable_account.vuid,
+            account_name=f"{accounts_receivable_account.account_number} - {accounts_receivable_account.account_name}",
+            debit_amount=net_amount,
+            credit_amount=0,
+            description=f"Project Billing {billing.billing_number} (Net)",
+            line_number=1
+        ))
+        
+        # Credit: Construction Revenue
+        posted_record.line_items.append(PostedRecordLineItem(
+            gl_account_vuid=construction_revenue_account.vuid,
+            account_name=f"{construction_revenue_account.account_number} - {construction_revenue_account.account_name}",
+            debit_amount=0,
+            credit_amount=net_amount,
+            description=f"Project Billing {billing.billing_number} (Net)",
+            line_number=2
+        ))
+        
+        # If there's retainage, create separate posted record
+        if float(billing.retention_held or 0) > 0:
+            if not retainage_payable_account:
+                return {'success': False, 'error': 'Retainage Payable account not found in chart of accounts'}
+                
+            retainage_posted_record = PostedRecord(
+                transaction_type='project_billing_retainage',
+                transaction_vuid=billing_vuid,
+                posted_by=posted_by,
+                accounting_period_vuid=billing.accounting_period_vuid,
+                project_vuid=billing.project_vuid,
+                reference_number=f"{billing.billing_number}-RET",
+                reference_type='project_billing_retainage',
+                description=f"Project Billing {billing.billing_number} (Retainage)",
+                total_amount=float(billing.retention_held or 0),
+                net_amount=0,
+                retainage_amount=float(billing.retention_held or 0),
+                total_debits=float(billing.retention_held or 0),
+                total_credits=float(billing.retention_held or 0)
+            )
+            
+            db.session.add(retainage_posted_record)
+            db.session.flush()
+            
+            # Retainage line items
+            retainage_posted_record.line_items.append(PostedRecordLineItem(
+                gl_account_vuid=accounts_receivable_account.vuid,
+                account_name=f"{accounts_receivable_account.account_number} - {accounts_receivable_account.account_name}",
+                debit_amount=float(billing.retention_held or 0),
+                credit_amount=0,
+                description=f"Project Billing {billing.billing_number} Retainage",
+                line_number=1
+            ))
+            
+            retainage_posted_record.line_items.append(PostedRecordLineItem(
+                gl_account_vuid=retainage_payable_account.vuid,
+                account_name=f"{retainage_payable_account.account_number} - {retainage_payable_account.account_name}",
+                debit_amount=0,
+                credit_amount=float(billing.retention_held or 0),
+                description=f"Project Billing {billing.billing_number} Retainage",
+                line_number=2
+            ))
+        
+        db.session.commit()
+        return {'success': True, 'message': f'Project Billing {billing.billing_number} posted successfully'}
+        
+    except Exception as e:
+        db.session.rollback()
+        return {'success': False, 'error': f'Error posting Project Billing: {str(e)}'}
+
+def post_labor_cost(labor_cost_vuid, posted_by):
+    """Post a Labor Cost to the posted records system"""
+    try:
+        # Get the labor cost with relationships
+        labor_cost = LaborCost.query.options(
+            db.joinedload(LaborCost.project),
+            db.joinedload(LaborCost.employee)
+        ).get(labor_cost_vuid)
+        
+        if not labor_cost:
+            return {'success': False, 'error': 'Labor cost not found'}
+        
+        if labor_cost.status != 'active':
+            return {'success': False, 'error': 'Labor cost must be active before posting'}
+        
+        # Check if already posted
+        existing_posted = PostedRecord.query.filter_by(
+            transaction_type='labor_cost',
+            transaction_vuid=labor_cost_vuid,
+            status='posted'
+        ).first()
+        
+        if existing_posted:
+            return {'success': False, 'error': 'Labor cost already posted'}
+        
+        amount = float(labor_cost.amount or 0)
+        employee_name = labor_cost.employee.employee_name if labor_cost.employee else 'Unknown'
+        
+        # Create posted record
+        posted_record = PostedRecord(
+            transaction_type='labor_cost',
+            transaction_vuid=labor_cost_vuid,
+            posted_by=posted_by,
+            accounting_period_vuid=labor_cost.accounting_period_vuid,
+            project_vuid=labor_cost.project_vuid,
+            reference_number=f"{labor_cost.employee_id or 'UNK'}-{labor_cost.payroll_date or 'UNK'}",
+            reference_type='labor_cost',
+            description=f"Labor Cost - {employee_name}",
+            total_amount=amount,
+            net_amount=amount,
+            retainage_amount=0,
+            total_debits=amount,
+            total_credits=amount
+        )
+        
+        db.session.add(posted_record)
+        db.session.flush()
+        
+        # Get the correct account VUIDs
+        construction_costs_account = ChartOfAccounts.query.filter(
+            ChartOfAccounts.account_name.ilike('%construction%cost%')
+        ).first()
+        
+        accounts_payable_account = ChartOfAccounts.query.filter(
+            ChartOfAccounts.account_name.ilike('%accounts%payable%')
+        ).first()
+        
+        if not construction_costs_account or not accounts_payable_account:
+            return {'success': False, 'error': 'Required GL accounts not found in chart of accounts'}
+        
+        # Create line items
+        # Debit: Construction Costs
+        posted_record.line_items.append(PostedRecordLineItem(
+            gl_account_vuid=construction_costs_account.vuid,
+            account_name=f"{construction_costs_account.account_number} - {construction_costs_account.account_name}",
+            debit_amount=amount,
+            credit_amount=0,
+            description=f"Labor Cost - {employee_name}",
+            line_number=1
+        ))
+        
+        # Credit: Accounts Payable
+        posted_record.line_items.append(PostedRecordLineItem(
+            gl_account_vuid=accounts_payable_account.vuid,
+            account_name=f"{accounts_payable_account.account_number} - {accounts_payable_account.account_name}",
+            debit_amount=0,
+            credit_amount=amount,
+            description=f"Labor Cost - {employee_name}",
+            line_number=2
+        ))
+        
+        db.session.commit()
+        return {'success': True, 'message': f'Labor Cost for {employee_name} posted successfully'}
+        
+    except Exception as e:
+        db.session.rollback()
+        return {'success': False, 'error': f'Error posting Labor Cost: {str(e)}'}
+
+def post_project_expense(expense_vuid, posted_by):
+    """Post a Project Expense to the posted records system"""
+    try:
+        # Get the expense with relationships
+        expense = ProjectExpense.query.options(
+            db.joinedload(ProjectExpense.project),
+            db.joinedload(ProjectExpense.cost_type)
+        ).get(expense_vuid)
+        
+        if not expense:
+            return {'success': False, 'error': 'Project expense not found'}
+        
+        if expense.status != 'approved':
+            return {'success': False, 'error': 'Project expense must be approved before posting'}
+        
+        # Check if already posted
+        existing_posted = PostedRecord.query.filter_by(
+            transaction_type='project_expense',
+            transaction_vuid=expense_vuid,
+            status='posted'
+        ).first()
+        
+        if existing_posted:
+            return {'success': False, 'error': 'Project expense already posted'}
+        
+        amount = float(expense.amount or 0)
+        
+        # Create posted record
+        posted_record = PostedRecord(
+            transaction_type='project_expense',
+            transaction_vuid=expense_vuid,
+            posted_by=posted_by,
+            accounting_period_vuid=expense.accounting_period_vuid,
+            project_vuid=expense.project_vuid,
+            reference_number=f"EXP-{expense.expense_date or 'UNK'}",
+            reference_type='project_expense',
+            description=f"Project Expense - {expense.description or 'Expense'}",
+            total_amount=amount,
+            net_amount=amount,
+            retainage_amount=0,
+            total_debits=amount,
+            total_credits=amount
+        )
+        
+        db.session.add(posted_record)
+        db.session.flush()
+        
+        # Get the correct account VUIDs
+        construction_costs_account = ChartOfAccounts.query.filter(
+            ChartOfAccounts.account_name.ilike('%construction%cost%')
+        ).first()
+        
+        accounts_payable_account = ChartOfAccounts.query.filter(
+            ChartOfAccounts.account_name.ilike('%accounts%payable%')
+        ).first()
+        
+        if not construction_costs_account or not accounts_payable_account:
+            return {'success': False, 'error': 'Required GL accounts not found in chart of accounts'}
+        
+        # Create line items
+        # Debit: Construction Costs
+        posted_record.line_items.append(PostedRecordLineItem(
+            gl_account_vuid=construction_costs_account.vuid,
+            account_name=f"{construction_costs_account.account_number} - {construction_costs_account.account_name}",
+            debit_amount=amount,
+            credit_amount=0,
+            description=f"Project Expense - {expense.description or 'Expense'}",
+            line_number=1
+        ))
+        
+        # Credit: Accounts Payable
+        posted_record.line_items.append(PostedRecordLineItem(
+            gl_account_vuid=accounts_payable_account.vuid,
+            account_name=f"{accounts_payable_account.account_number} - {accounts_payable_account.account_name}",
+            debit_amount=0,
+            credit_amount=amount,
+            description=f"Project Expense - {expense.description or 'Expense'}",
+            line_number=2
+        ))
+        
+        db.session.commit()
+        return {'success': True, 'message': f'Project Expense posted successfully'}
+        
+    except Exception as e:
+        db.session.rollback()
+        return {'success': False, 'error': f'Error posting Project Expense: {str(e)}'}
+
+def post_over_under_billing(project_vuid, accounting_period_vuid, over_under_amount, posted_by):
+    """Post an Over/Under Billing adjustment to the posted records system"""
+    try:
+        # Check if already posted for this project and period
+        existing_posted = PostedRecord.query.filter_by(
+            transaction_type='over_under_billing',
+            project_vuid=project_vuid,
+            accounting_period_vuid=accounting_period_vuid,
+            status='posted'
+        ).first()
+        
+        if existing_posted:
+            return {'success': False, 'error': 'Over/Under billing already posted for this project and period'}
+        
+        # Get project info
+        project = Project.query.get(project_vuid)
+        if not project:
+            return {'success': False, 'error': 'Project not found'}
+        
+        # Determine if it's over or under billing
+        is_over_billing = over_under_amount > 0
+        transaction_type = 'over_billing' if is_over_billing else 'under_billing'
+        reference_number = f"OUB-{project.project_number}-{accounting_period_vuid[:8]}"
+        
+        # Create posted record
+        posted_record = PostedRecord(
+            transaction_type=transaction_type,
+            transaction_vuid=f"OUB-{project_vuid[:8]}-{accounting_period_vuid[:8]}",  # Shorter synthetic VUID
+            posted_by=posted_by,
+            accounting_period_vuid=accounting_period_vuid,
+            project_vuid=project_vuid,
+            reference_number=reference_number,
+            reference_type='over_under_billing',
+            description=f"{'Over' if is_over_billing else 'Under'} Billing Adjustment - {project.project_name}",
+            total_amount=abs(over_under_amount),
+            net_amount=abs(over_under_amount),
+            retainage_amount=0,
+            total_debits=abs(over_under_amount),
+            total_credits=abs(over_under_amount)
+        )
+        
+        db.session.add(posted_record)
+        db.session.flush()
+        
+        # Get the correct account VUIDs
+        costs_in_excess_account = ChartOfAccounts.query.filter(
+            ChartOfAccounts.account_name.ilike('%costs%excess%')
+        ).first()
+        
+        construction_revenue_account = ChartOfAccounts.query.filter(
+            ChartOfAccounts.account_name.ilike('%construction%revenue%')
+        ).first()
+        
+        if not costs_in_excess_account or not construction_revenue_account:
+            return {'success': False, 'error': 'Required GL accounts not found in chart of accounts'}
+        
+        # Create line items based on over/under billing
+        if is_over_billing:
+            # Over billing: Debit Revenue, Credit Costs in Excess
+            posted_record.line_items.append(PostedRecordLineItem(
+                gl_account_vuid=construction_revenue_account.vuid,
+                account_name=f"{construction_revenue_account.account_number} - {construction_revenue_account.account_name}",
+                debit_amount=abs(over_under_amount),
+                credit_amount=0,
+                description=f"Over Billing Adjustment - {project.project_name}",
+                line_number=1
+            ))
+            
+            posted_record.line_items.append(PostedRecordLineItem(
+                gl_account_vuid=costs_in_excess_account.vuid,
+                account_name=f"{costs_in_excess_account.account_number} - {costs_in_excess_account.account_name}",
+                debit_amount=0,
+                credit_amount=abs(over_under_amount),
+                description=f"Over Billing Adjustment - {project.project_name}",
+                line_number=2
+            ))
+        else:
+            # Under billing: Debit Costs in Excess, Credit Revenue
+            posted_record.line_items.append(PostedRecordLineItem(
+                gl_account_vuid=costs_in_excess_account.vuid,
+                account_name=f"{costs_in_excess_account.account_number} - {costs_in_excess_account.account_name}",
+                debit_amount=abs(over_under_amount),
+                credit_amount=0,
+                description=f"Under Billing Adjustment - {project.project_name}",
+                line_number=1
+            ))
+            
+            posted_record.line_items.append(PostedRecordLineItem(
+                gl_account_vuid=construction_revenue_account.vuid,
+                account_name=f"{construction_revenue_account.account_number} - {construction_revenue_account.account_name}",
+                debit_amount=0,
+                credit_amount=abs(over_under_amount),
+                description=f"Under Billing Adjustment - {project.project_name}",
+                line_number=2
+            ))
+        
+        db.session.commit()
+        return {'success': True, 'message': f'{"Over" if is_over_billing else "Under"} Billing Adjustment posted successfully'}
+        
+    except Exception as e:
+        db.session.rollback()
+        return {'success': False, 'error': f'Error posting Over/Under Billing: {str(e)}'}
+
+def comprehensive_backfill_all_transactions(accounting_period_vuid, posted_by='Comprehensive Backfill'):
+    """Comprehensive backfill of ALL transactions for ALL projects in a period"""
+    try:
+        backfilled_count = 0
+        
+        print(f"Starting comprehensive backfill for period {accounting_period_vuid}")
+        
+        # 1. Backfill ALL AP Invoices for this period
+        ap_invoices = APInvoice.query.filter_by(
+            accounting_period_vuid=accounting_period_vuid,
+            status='approved'
+        ).all()
+        
+        print(f"Found {len(ap_invoices)} AP invoices to process")
+        
+        for invoice in ap_invoices:
+            # Check if already posted
+            existing_posted = PostedRecord.query.filter_by(
+                transaction_type='ap_invoice',
+                transaction_vuid=invoice.vuid,
+                status='posted'
+            ).first()
+            
+            if not existing_posted:
+                result = post_ap_invoice(invoice.vuid, posted_by)
+                if result['success']:
+                    backfilled_count += 1
+                    print(f"Backfilled AP Invoice: {invoice.invoice_number} (${invoice.total_amount})")
+                else:
+                    print(f"Failed to backfill AP Invoice {invoice.invoice_number}: {result['error']}")
+        
+        # 2. Backfill ALL Project Billings for this period
+        project_billings = ProjectBilling.query.filter_by(
+            accounting_period_vuid=accounting_period_vuid,
+            status='approved'
+        ).all()
+        
+        print(f"Found {len(project_billings)} project billings to process")
+        
+        for billing in project_billings:
+            # Check if already posted
+            existing_posted = PostedRecord.query.filter_by(
+                transaction_type='project_billing',
+                transaction_vuid=billing.vuid,
+                status='posted'
+            ).first()
+            
+            if not existing_posted:
+                result = post_project_billing(billing.vuid, posted_by)
+                if result['success']:
+                    backfilled_count += 1
+                    print(f"Backfilled Project Billing: {billing.billing_number} (${billing.total_amount})")
+                else:
+                    print(f"Failed to backfill Project Billing {billing.billing_number}: {result['error']}")
+        
+        # 3. Backfill ALL Labor Costs for this period
+        labor_costs = LaborCost.query.filter_by(
+            accounting_period_vuid=accounting_period_vuid,
+            status='active'
+        ).all()
+        
+        print(f"Found {len(labor_costs)} labor costs to process")
+        
+        for labor_cost in labor_costs:
+            # Check if already posted
+            existing_posted = PostedRecord.query.filter_by(
+                transaction_type='labor_cost',
+                transaction_vuid=labor_cost.vuid,
+                status='posted'
+            ).first()
+            
+            if not existing_posted:
+                result = post_labor_cost(labor_cost.vuid, posted_by)
+                if result['success']:
+                    backfilled_count += 1
+                    print(f"Backfilled Labor Cost: {labor_cost.employee_id} (${labor_cost.amount})")
+                else:
+                    print(f"Failed to backfill Labor Cost {labor_cost.employee_id}: {result['error']}")
+        
+        # 4. Backfill ALL Project Expenses for this period
+        project_expenses = ProjectExpense.query.filter_by(
+            accounting_period_vuid=accounting_period_vuid,
+            status='approved'
+        ).all()
+        
+        print(f"Found {len(project_expenses)} project expenses to process")
+        
+        for expense in project_expenses:
+            # Check if already posted
+            existing_posted = PostedRecord.query.filter_by(
+                transaction_type='project_expense',
+                transaction_vuid=expense.vuid,
+                status='posted'
+            ).first()
+            
+            if not existing_posted:
+                result = post_project_expense(expense.vuid, posted_by)
+                if result['success']:
+                    backfilled_count += 1
+                    print(f"Backfilled Project Expense: {expense.description} (${expense.amount})")
+                else:
+                    print(f"Failed to backfill Project Expense {expense.description}: {result['error']}")
+        
+        print(f"Comprehensive backfill completed. Backfilled {backfilled_count} transactions.")
+        
+        return {
+            'success': True,
+            'message': f'Comprehensive backfill completed. Backfilled {backfilled_count} transactions.',
+            'backfilled_count': backfilled_count
+        }
+        
+    except Exception as e:
+        print(f"Error in comprehensive backfill: {str(e)}")
+        return {'success': False, 'error': f'Error in comprehensive backfill: {str(e)}'}
+
+def generate_journal_entries_from_posted_records(accounting_period_vuid):
+    """Generate journal entries from posted records instead of recalculating from transaction tables"""
+    try:
+        print(f"Generating journal entries from posted records for accounting period {accounting_period_vuid}")
+        
+        # Get GL settings
+        gl_settings = GLSettings.query.first()
+        if not gl_settings:
+            print(f"No GL settings found")
+            return False
+        
+        # Track created journal entries
+        created_entries = []
+        
+        # Get all posted records for this period
+        posted_records = PostedRecord.query.filter_by(
+            accounting_period_vuid=accounting_period_vuid,
+            status='posted'
+        ).options(
+            db.joinedload(PostedRecord.line_items)
+        ).all()
+        
+        print(f"Found {len(posted_records)} posted records to process")
+        
+        for posted_record in posted_records:
+            print(f"Processing posted record: {posted_record.transaction_type} - {posted_record.reference_number}")
+            
+            # Check if journal entry already exists
+            existing_entry = JournalEntry.query.filter_by(
+                reference_type=posted_record.transaction_type,
+                reference_vuid=posted_record.transaction_vuid
+            ).first()
+            
+            if existing_entry:
+                print(f"Journal entry already exists for {posted_record.transaction_type} {posted_record.reference_number}. Skipping creation.")
+                continue
+            
+            # Create journal entry from posted record
+            journal_entry = create_journal_entry_from_posted_record(posted_record)
+            if journal_entry:
+                created_entries.append(f"{posted_record.transaction_type} - {posted_record.reference_number}")
+                print(f"Successfully created journal entry for {posted_record.transaction_type} {posted_record.reference_number}")
+            else:
+                print(f"Failed to create journal entry for {posted_record.transaction_type} {posted_record.reference_number}")
+        
+        print(f"Journal entry generation completed. Created {len(created_entries)} entries.")
+        return True
+        
+    except Exception as e:
+        print(f"Error generating journal entries from posted records: {str(e)}")
+        return False
+
+def generate_journal_number():
+    """Generate a unique journal number"""
+    # Get the next journal number from GL settings
+    gl_settings = GLSettings.query.first()
+    if gl_settings and hasattr(gl_settings, 'next_journal_number'):
+        next_number = gl_settings.next_journal_number
+        gl_settings.next_journal_number += 1
+        db.session.commit()
+        return f"JE-{next_number:06d}"
+    else:
+        # Fallback: use timestamp
+        return f"JE-{int(datetime.utcnow().timestamp())}"
+
+def create_journal_entry_from_posted_record(posted_record):
+    """Create a journal entry from a posted record"""
+    try:
+        # Generate journal number
+        journal_number = generate_journal_number()
+        
+        # Create the journal entry
+        journal_entry = JournalEntry(
+            journal_number=journal_number,
+            description=posted_record.description or f"{posted_record.transaction_type.replace('_', ' ').title()} - {posted_record.reference_number}",
+            reference_type=posted_record.transaction_type,
+            reference_vuid=posted_record.transaction_vuid,
+            accounting_period_vuid=posted_record.accounting_period_vuid,
+            project_vuid=posted_record.project_vuid,
+            entry_date=datetime.utcnow().date(),
+            status='posted'
+        )
+        
+        db.session.add(journal_entry)
+        db.session.flush()
+        
+        # Create journal entry lines from posted record line items
+        for line_item in posted_record.line_items:
+            journal_line = JournalEntryLine(
+                journal_entry_vuid=journal_entry.vuid,
+                gl_account_vuid=line_item.gl_account_vuid,
+                debit_amount=line_item.debit_amount,
+                credit_amount=line_item.credit_amount,
+                description=line_item.description or '',
+                line_number=line_item.line_number
+            )
+            db.session.add(journal_line)
+        
+        db.session.commit()
+        return journal_entry
+        
+    except Exception as e:
+        db.session.rollback()
+        print(f"Error creating journal entry from posted record: {str(e)}")
+        return None
+
+def backfill_existing_journal_entries_to_posted_records(accounting_period_vuid, posted_by='System Backfill'):
+    """Backfill existing journal entries into posted records system"""
+    try:
+        backfilled_count = 0
+        
+        # 1. Backfill AP Invoices
+        ap_invoices = APInvoice.query.filter_by(
+            accounting_period_vuid=accounting_period_vuid,
+            status='approved'
+        ).all()
+        
+        for invoice in ap_invoices:
+            # Check if already posted
+            existing_posted = PostedRecord.query.filter_by(
+                transaction_type='ap_invoice',
+                transaction_vuid=invoice.vuid,
+                status='posted'
+            ).first()
+            
+            if not existing_posted:
+                result = post_ap_invoice(invoice.vuid, posted_by)
+                if result['success']:
+                    backfilled_count += 1
+                    print(f"Backfilled AP Invoice: {invoice.invoice_number}")
+        
+        # 2. Backfill Project Billings
+        project_billings = ProjectBilling.query.filter_by(
+            accounting_period_vuid=accounting_period_vuid,
+            status='approved'
+        ).all()
+        
+        for billing in project_billings:
+            # Check if already posted
+            existing_posted = PostedRecord.query.filter_by(
+                transaction_type='project_billing',
+                transaction_vuid=billing.vuid,
+                status='posted'
+            ).first()
+            
+            if not existing_posted:
+                result = post_project_billing(billing.vuid, posted_by)
+                if result['success']:
+                    backfilled_count += 1
+                    print(f"Backfilled Project Billing: {billing.billing_number}")
+        
+        # 3. Backfill Labor Costs
+        labor_costs = LaborCost.query.filter_by(
+            accounting_period_vuid=accounting_period_vuid,
+            status='active'
+        ).all()
+        
+        for labor_cost in labor_costs:
+            # Check if already posted
+            existing_posted = PostedRecord.query.filter_by(
+                transaction_type='labor_cost',
+                transaction_vuid=labor_cost.vuid,
+                status='posted'
+            ).first()
+            
+            if not existing_posted:
+                result = post_labor_cost(labor_cost.vuid, posted_by)
+                if result['success']:
+                    backfilled_count += 1
+                    print(f"Backfilled Labor Cost: {labor_cost.employee_id}")
+        
+        # 4. Backfill Project Expenses
+        project_expenses = ProjectExpense.query.filter_by(
+            accounting_period_vuid=accounting_period_vuid,
+            status='approved'
+        ).all()
+        
+        for expense in project_expenses:
+            # Check if already posted
+            existing_posted = PostedRecord.query.filter_by(
+                transaction_type='project_expense',
+                transaction_vuid=expense.vuid,
+                status='posted'
+            ).first()
+            
+            if not existing_posted:
+                result = post_project_expense(expense.vuid, posted_by)
+                if result['success']:
+                    backfilled_count += 1
+                    print(f"Backfilled Project Expense: {expense.description}")
+        
+        return {
+            'success': True,
+            'message': f'Backfilled {backfilled_count} existing transactions to posted records',
+            'backfilled_count': backfilled_count
+        }
+        
+    except Exception as e:
+        return {'success': False, 'error': f'Error backfilling journal entries: {str(e)}'}
+
+# Posted Records Models for Journal Entry Posting System
+class PostedRecord(db.Model):
+    """Stores posted transaction records that will be used for journal entry generation"""
+    __tablename__ = 'posted_records'
+    
+    vuid = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    transaction_type = db.Column(db.String(50), nullable=False)  # 'ap_invoice', 'project_billing', 'labor_cost', etc.
+    transaction_vuid = db.Column(db.String(36), nullable=False)  # Reference to original transaction
+    posted_by = db.Column(db.String(100), nullable=False)
+    posted_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    accounting_period_vuid = db.Column(db.String(36), db.ForeignKey('accounting_periods.vuid'), nullable=False)
+    project_vuid = db.Column(db.String(36), db.ForeignKey('projects.vuid'), nullable=True)
+    reference_number = db.Column(db.String(100), nullable=False)
+    reference_type = db.Column(db.String(50), nullable=False)  # 'ap_invoice', 'project_billing', etc.
+    description = db.Column(db.Text, nullable=True)
+    total_amount = db.Column(db.Numeric(15, 2), nullable=False, default=0)
+    net_amount = db.Column(db.Numeric(15, 2), nullable=False, default=0)
+    retainage_amount = db.Column(db.Numeric(15, 2), nullable=False, default=0)
+    total_debits = db.Column(db.Numeric(15, 2), nullable=False, default=0)
+    total_credits = db.Column(db.Numeric(15, 2), nullable=False, default=0)
+    status = db.Column(db.String(20), nullable=False, default='posted')  # 'posted', 'reversed'
+    reversed_at = db.Column(db.DateTime, nullable=True)
+    reversed_by = db.Column(db.String(100), nullable=True)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    accounting_period = db.relationship('AccountingPeriod', backref='posted_records')
+    project = db.relationship('Project', backref='posted_records')
+    line_items = db.relationship('PostedRecordLineItem', backref='posted_record', cascade='all, delete-orphan')
+
+class PostedRecordLineItem(db.Model):
+    """Stores individual line items for posted records"""
+    __tablename__ = 'posted_record_line_items'
+    
+    vuid = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    posted_record_vuid = db.Column(db.String(36), db.ForeignKey('posted_records.vuid'), nullable=False)
+    gl_account_vuid = db.Column(db.String(36), db.ForeignKey('chart_of_accounts.vuid'), nullable=False)
+    account_name = db.Column(db.String(200), nullable=False)
+    debit_amount = db.Column(db.Numeric(15, 2), nullable=False, default=0)
+    credit_amount = db.Column(db.Numeric(15, 2), nullable=False, default=0)
+    description = db.Column(db.Text, nullable=True)
+    line_number = db.Column(db.Integer, nullable=False)
+    created_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, nullable=False, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    gl_account = db.relationship('ChartOfAccounts', backref='posted_record_line_items')
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5001, use_reloader=False)
